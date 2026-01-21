@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package paxos;
+option go_package = "paxos/proto;proto";
+
+service Paxos {
+  rpc Prepare(PrepareRequest) returns (PromiseResponse);
+  rpc Accept(AcceptRequest) returns (AcceptedResponse);
+  rpc Commit(CommitRequest) returns (CommitResponse);
+  rpc GetLogState(GetLogRequest) returns (GetLogResponse);
+}
+
+message PrepareRequest {
+  int64 proposal_id = 1;
+  int32 sender_id   = 2;
+  int32 instance_id = 3;
+
+}
+
+message PromiseResponse {
+  bool promised = 1;
+  int64 accepted_id = 2;
+  bytes accepted_value = 3;
+}
+
+message AcceptRequest {
+  int64 proposal_id = 1;
+  bytes value = 2;
+  int32 sender_id   = 3;
+  int32 instance_id = 4;
+
+}
+
+message AcceptedResponse {
+  bool accepted = 1;
+}
+
+
+message CommitRequest {
+  int64 proposal_id = 1;
+  bytes value = 2;
+  int32 sender_id = 3;
+  int32 instance_id = 4;
+}
+
+message CommitResponse {
+  bool commit = 1;
+}
+
+message GetLogRequest {
+  int32 sender_id = 1;
+}
+
+message GetLogResponse {
+  int32 next_index = 1;
+  repeated LogEntry log_entries = 2; 
+}
+
+message LogEntry {
+  int32 instance_id = 1;
+  bytes value = 2;
+}
