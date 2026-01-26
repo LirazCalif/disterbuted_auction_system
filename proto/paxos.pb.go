@@ -513,6 +513,270 @@ func (x *LogEntry) GetValue() []byte {
 	return nil
 }
 
+type ReadIndexRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReadIndexRequest) Reset() {
+	*x = ReadIndexRequest{}
+	mi := &file_proto_paxos_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReadIndexRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReadIndexRequest) ProtoMessage() {}
+
+func (x *ReadIndexRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_paxos_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReadIndexRequest.ProtoReflect.Descriptor instead.
+func (*ReadIndexRequest) Descriptor() ([]byte, []int) {
+	return file_proto_paxos_proto_rawDescGZIP(), []int{9}
+}
+
+type ReadIndexResponse struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	LeaderCommitIndex int32                  `protobuf:"varint,1,opt,name=leader_commit_index,json=leaderCommitIndex,proto3" json:"leader_commit_index,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *ReadIndexResponse) Reset() {
+	*x = ReadIndexResponse{}
+	mi := &file_proto_paxos_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReadIndexResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReadIndexResponse) ProtoMessage() {}
+
+func (x *ReadIndexResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_paxos_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReadIndexResponse.ProtoReflect.Descriptor instead.
+func (*ReadIndexResponse) Descriptor() ([]byte, []int) {
+	return file_proto_paxos_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ReadIndexResponse) GetLeaderCommitIndex() int32 {
+	if x != nil {
+		return x.LeaderCommitIndex
+	}
+	return 0
+}
+
+type Empty struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Empty) Reset() {
+	*x = Empty{}
+	mi := &file_proto_paxos_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Empty) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Empty) ProtoMessage() {}
+
+func (x *Empty) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_paxos_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Empty.ProtoReflect.Descriptor instead.
+func (*Empty) Descriptor() ([]byte, []int) {
+	return file_proto_paxos_proto_rawDescGZIP(), []int{11}
+}
+
+type StatusResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AppliedIndex  int32                  `protobuf:"varint,1,opt,name=appliedIndex,proto3" json:"appliedIndex,omitempty"`
+	IsLeader      bool                   `protobuf:"varint,2,opt,name=isLeader,proto3" json:"isLeader,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StatusResponse) Reset() {
+	*x = StatusResponse{}
+	mi := &file_proto_paxos_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StatusResponse) ProtoMessage() {}
+
+func (x *StatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_paxos_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StatusResponse.ProtoReflect.Descriptor instead.
+func (*StatusResponse) Descriptor() ([]byte, []int) {
+	return file_proto_paxos_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *StatusResponse) GetAppliedIndex() int32 {
+	if x != nil {
+		return x.AppliedIndex
+	}
+	return 0
+}
+
+func (x *StatusResponse) GetIsLeader() bool {
+	if x != nil {
+		return x.IsLeader
+	}
+	return false
+}
+
+type ProposeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Value         []byte                 `protobuf:"bytes,1,opt,name=value,proto3" json:"value,omitempty"`
+	SenderId      int32                  `protobuf:"varint,2,opt,name=sender_id,json=senderId,proto3" json:"sender_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProposeRequest) Reset() {
+	*x = ProposeRequest{}
+	mi := &file_proto_paxos_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProposeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProposeRequest) ProtoMessage() {}
+
+func (x *ProposeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_paxos_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProposeRequest.ProtoReflect.Descriptor instead.
+func (*ProposeRequest) Descriptor() ([]byte, []int) {
+	return file_proto_paxos_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ProposeRequest) GetValue() []byte {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+func (x *ProposeRequest) GetSenderId() int32 {
+	if x != nil {
+		return x.SenderId
+	}
+	return 0
+}
+
+type ProposeResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProposeResponse) Reset() {
+	*x = ProposeResponse{}
+	mi := &file_proto_paxos_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProposeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProposeResponse) ProtoMessage() {}
+
+func (x *ProposeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_paxos_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProposeResponse.ProtoReflect.Descriptor instead.
+func (*ProposeResponse) Descriptor() ([]byte, []int) {
+	return file_proto_paxos_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ProposeResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
 var File_proto_paxos_proto protoreflect.FileDescriptor
 
 const file_proto_paxos_proto_rawDesc = "" +
@@ -557,12 +821,27 @@ const file_proto_paxos_proto_rawDesc = "" +
 	"\bLogEntry\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\x05R\n" +
 	"instanceId\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05value2\xed\x01\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value\"\x12\n" +
+	"\x10ReadIndexRequest\"C\n" +
+	"\x11ReadIndexResponse\x12.\n" +
+	"\x13leader_commit_index\x18\x01 \x01(\x05R\x11leaderCommitIndex\"\a\n" +
+	"\x05Empty\"P\n" +
+	"\x0eStatusResponse\x12\"\n" +
+	"\fappliedIndex\x18\x01 \x01(\x05R\fappliedIndex\x12\x1a\n" +
+	"\bisLeader\x18\x02 \x01(\bR\bisLeader\"C\n" +
+	"\x0eProposeRequest\x12\x14\n" +
+	"\x05value\x18\x01 \x01(\fR\x05value\x12\x1b\n" +
+	"\tsender_id\x18\x02 \x01(\x05R\bsenderId\"+\n" +
+	"\x0fProposeResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess2\xa9\x03\n" +
 	"\x05Paxos\x128\n" +
 	"\aPrepare\x12\x15.paxos.PrepareRequest\x1a\x16.paxos.PromiseResponse\x127\n" +
 	"\x06Accept\x12\x14.paxos.AcceptRequest\x1a\x17.paxos.AcceptedResponse\x125\n" +
 	"\x06Commit\x12\x14.paxos.CommitRequest\x1a\x15.paxos.CommitResponse\x12:\n" +
-	"\vGetLogState\x12\x14.paxos.GetLogRequest\x1a\x15.paxos.GetLogResponseB\x13Z\x11paxos/proto;protob\x06proto3"
+	"\vGetLogState\x12\x14.paxos.GetLogRequest\x1a\x15.paxos.GetLogResponse\x12A\n" +
+	"\fGetReadIndex\x12\x17.paxos.ReadIndexRequest\x1a\x18.paxos.ReadIndexResponse\x126\n" +
+	"\x0fGetServerStatus\x12\f.paxos.Empty\x1a\x15.paxos.StatusResponse\x12?\n" +
+	"\x0eForwardPropose\x12\x15.paxos.ProposeRequest\x1a\x16.paxos.ProposeResponseB\x13Z\x11paxos/proto;protob\x06proto3"
 
 var (
 	file_proto_paxos_proto_rawDescOnce sync.Once
@@ -576,33 +855,45 @@ func file_proto_paxos_proto_rawDescGZIP() []byte {
 	return file_proto_paxos_proto_rawDescData
 }
 
-var file_proto_paxos_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_proto_paxos_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_proto_paxos_proto_goTypes = []any{
-	(*PrepareRequest)(nil),   // 0: paxos.PrepareRequest
-	(*PromiseResponse)(nil),  // 1: paxos.PromiseResponse
-	(*AcceptRequest)(nil),    // 2: paxos.AcceptRequest
-	(*AcceptedResponse)(nil), // 3: paxos.AcceptedResponse
-	(*CommitRequest)(nil),    // 4: paxos.CommitRequest
-	(*CommitResponse)(nil),   // 5: paxos.CommitResponse
-	(*GetLogRequest)(nil),    // 6: paxos.GetLogRequest
-	(*GetLogResponse)(nil),   // 7: paxos.GetLogResponse
-	(*LogEntry)(nil),         // 8: paxos.LogEntry
+	(*PrepareRequest)(nil),    // 0: paxos.PrepareRequest
+	(*PromiseResponse)(nil),   // 1: paxos.PromiseResponse
+	(*AcceptRequest)(nil),     // 2: paxos.AcceptRequest
+	(*AcceptedResponse)(nil),  // 3: paxos.AcceptedResponse
+	(*CommitRequest)(nil),     // 4: paxos.CommitRequest
+	(*CommitResponse)(nil),    // 5: paxos.CommitResponse
+	(*GetLogRequest)(nil),     // 6: paxos.GetLogRequest
+	(*GetLogResponse)(nil),    // 7: paxos.GetLogResponse
+	(*LogEntry)(nil),          // 8: paxos.LogEntry
+	(*ReadIndexRequest)(nil),  // 9: paxos.ReadIndexRequest
+	(*ReadIndexResponse)(nil), // 10: paxos.ReadIndexResponse
+	(*Empty)(nil),             // 11: paxos.Empty
+	(*StatusResponse)(nil),    // 12: paxos.StatusResponse
+	(*ProposeRequest)(nil),    // 13: paxos.ProposeRequest
+	(*ProposeResponse)(nil),   // 14: paxos.ProposeResponse
 }
 var file_proto_paxos_proto_depIdxs = []int32{
-	8, // 0: paxos.GetLogResponse.log_entries:type_name -> paxos.LogEntry
-	0, // 1: paxos.Paxos.Prepare:input_type -> paxos.PrepareRequest
-	2, // 2: paxos.Paxos.Accept:input_type -> paxos.AcceptRequest
-	4, // 3: paxos.Paxos.Commit:input_type -> paxos.CommitRequest
-	6, // 4: paxos.Paxos.GetLogState:input_type -> paxos.GetLogRequest
-	1, // 5: paxos.Paxos.Prepare:output_type -> paxos.PromiseResponse
-	3, // 6: paxos.Paxos.Accept:output_type -> paxos.AcceptedResponse
-	5, // 7: paxos.Paxos.Commit:output_type -> paxos.CommitResponse
-	7, // 8: paxos.Paxos.GetLogState:output_type -> paxos.GetLogResponse
-	5, // [5:9] is the sub-list for method output_type
-	1, // [1:5] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	8,  // 0: paxos.GetLogResponse.log_entries:type_name -> paxos.LogEntry
+	0,  // 1: paxos.Paxos.Prepare:input_type -> paxos.PrepareRequest
+	2,  // 2: paxos.Paxos.Accept:input_type -> paxos.AcceptRequest
+	4,  // 3: paxos.Paxos.Commit:input_type -> paxos.CommitRequest
+	6,  // 4: paxos.Paxos.GetLogState:input_type -> paxos.GetLogRequest
+	9,  // 5: paxos.Paxos.GetReadIndex:input_type -> paxos.ReadIndexRequest
+	11, // 6: paxos.Paxos.GetServerStatus:input_type -> paxos.Empty
+	13, // 7: paxos.Paxos.ForwardPropose:input_type -> paxos.ProposeRequest
+	1,  // 8: paxos.Paxos.Prepare:output_type -> paxos.PromiseResponse
+	3,  // 9: paxos.Paxos.Accept:output_type -> paxos.AcceptedResponse
+	5,  // 10: paxos.Paxos.Commit:output_type -> paxos.CommitResponse
+	7,  // 11: paxos.Paxos.GetLogState:output_type -> paxos.GetLogResponse
+	10, // 12: paxos.Paxos.GetReadIndex:output_type -> paxos.ReadIndexResponse
+	12, // 13: paxos.Paxos.GetServerStatus:output_type -> paxos.StatusResponse
+	14, // 14: paxos.Paxos.ForwardPropose:output_type -> paxos.ProposeResponse
+	8,  // [8:15] is the sub-list for method output_type
+	1,  // [1:8] is the sub-list for method input_type
+	1,  // [1:1] is the sub-list for extension type_name
+	1,  // [1:1] is the sub-list for extension extendee
+	0,  // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_proto_paxos_proto_init() }
@@ -616,7 +907,7 @@ func file_proto_paxos_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_paxos_proto_rawDesc), len(file_proto_paxos_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

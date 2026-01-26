@@ -3,6 +3,7 @@ package paxos
 import (
 	"log"
 	"sync"
+    "math"
 
 	pb "paxos/proto"
 
@@ -78,13 +79,23 @@ type MultiPaxosInstance struct {
     NextIndex int32
 	NumServers int
     Mu sync.Mutex
+    //for grid quorum
+    Rows int
+    Cols int
 }
 
 func NewMultiPaxosInstance(numServers int) *MultiPaxosInstance {
+    rows := int(math.Sqrt(float64(numServers)))
+	if rows == 0 { rows = 1 }
+	cols := numServers / rows
+    
     return &MultiPaxosInstance{
         Instances: make(map[int32]*PaxosInstance),
         NextIndex: 0,
 		NumServers: numServers,
+        Rows: rows,
+        Cols: cols,
+
     }
 }
 
@@ -117,6 +128,68 @@ func (m *MultiPaxosInstance) GetInstance(id int32) *PaxosInstance {
         }
     }
     return m.Instances[id]
+}
+
+
+//quorum extention
+// GetQuorumType determines which logic to apply
+func (m *MultiPaxosInstance) GetQuorumType() string {
+	if m.NumServers <= 5 {
+		return "MAJORITY"   // stage 1
+	} else if m.NumServers <= 10 {
+		return "ASYMMETRIC" // stage 2
+	}
+	return "GRID"           // stage 3
+}
+
+func (pi *PaxosInstance) HasElectionQuorum(m *MultiPaxosInstance) bool {
+	qType := m.GetQuorumType()
+	count := len(pi.Promises)
+
+	switch qType {
+	case "MAJORITY":
+		return count > m.NumServers/2 
+	case "ASYMMETRIC":
+		return count >= (m.NumServers - 2)
+	case "GRID":
+		for c := 0; c < m.Cols; c++ {
+			columnComplete := true
+			for r := 0; r < m.Rows; r++ {
+				serverID := int32(r*m.Cols + c + 1)
+				if !pi.Promises[serverID] {
+					columnComplete = false
+					break
+				}
+			}
+			if columnComplete { return true }
+		}
+	}
+	return false
+}
+
+func (pi *PaxosInstance) HasWriteQuorum(m *MultiPaxosInstance) bool {
+	qType := m.GetQuorumType()
+	count := len(pi.Accepts)
+
+	switch qType {
+	case "MAJORITY":
+		return count > m.NumServers/2 
+	case "ASYMMETRIC":
+		return count >= 3 
+	case "GRID":		
+		for r := 0; r < m.Rows; r++ {
+			rowComplete := true
+			for c := 0; c < m.Cols; c++ {
+				serverID := int32(r*m.Cols + c + 1)
+				if !pi.Accepts[serverID] {
+					rowComplete = false
+					break
+				}
+			}
+			if rowComplete { return true }
+		}
+	}
+	return false
 }
 
 

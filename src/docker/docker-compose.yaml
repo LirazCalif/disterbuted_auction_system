@@ -1,0 +1,197 @@
+version: '3.8'
+
+services:
+  etcd:
+      image: gcr.io/etcd-development/etcd:v3.5.0
+      command: >
+        /usr/local/bin/etcd
+        --name s1
+        --data-dir /etcd-data
+        --listen-client-urls http://0.0.0.0:2379
+        --advertise-client-urls http://etcd:2379
+        --listen-peer-urls http://0.0.0.0:2380
+        --initial-advertise-peer-urls http://etcd:2380
+        --initial-cluster s1=http://etcd:2380
+        --initial-cluster-token tkn
+        --initial-cluster-state new
+      ports:
+        - "2379:2379"
+      networks:
+      - paxos-net
+      healthcheck:
+        test: ["CMD", "etcdctl", "endpoint", "health"]
+        interval: 5s
+        timeout: 5s
+        retries: 10
+
+  server0:
+    build: { context: ../../, dockerfile: src/docker/Dockerfile }
+    command: ["./paxos_server", "--id=0", "--n=12"]
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+    ports: ["8080:8080"]
+    volumes:
+      - ./data/server0:/app/data
+    networks:
+      - paxos-net
+    depends_on:
+      etcd:
+        condition: service_healthy
+
+  server1:
+    build: { context: ../../, dockerfile: src/docker/Dockerfile }
+    command: ["./paxos_server", "--id=1", "--n=12"]
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+    ports: ["8081:8081"]
+    volumes:
+      - ./data/server1:/app/data
+    networks:
+      - paxos-net
+    depends_on:
+      etcd:
+        condition: service_healthy
+
+  server2:
+    build: { context: ../../, dockerfile: src/docker/Dockerfile }
+    command: ["./paxos_server", "--id=2", "--n=12"]
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+    ports: ["8082:8082"]
+    volumes:
+      - ./data/server2:/app/data
+    networks:
+      - paxos-net
+    depends_on:
+      etcd:
+        condition: service_healthy
+
+  server3:
+    build: { context: ../../, dockerfile: src/docker/Dockerfile }
+    command: ["./paxos_server", "--id=3", "--n=12"]
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+    ports: ["8083:8083"]
+    volumes:
+      - ./data/server3:/app/data
+    networks:
+      - paxos-net
+    depends_on:
+      etcd:
+        condition: service_healthy
+
+  server4:
+    build: { context: ../../, dockerfile: src/docker/Dockerfile }
+    command: ["./paxos_server", "--id=4", "--n=12"]
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+    ports: ["8084:8084"]
+    volumes:
+      - ./data/server4:/app/data
+    networks:
+      - paxos-net
+    depends_on:
+      etcd:
+        condition: service_healthy
+
+  server5:
+    build: { context: ../../, dockerfile: src/docker/Dockerfile }
+    command: ["./paxos_server", "--id=5", "--n=12"]
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+    ports: ["8085:8085"]
+    volumes:
+      - ./data/server5:/app/data
+    networks:
+      - paxos-net
+    depends_on:
+      etcd:
+        condition: service_healthy
+
+  server6:
+    build: { context: ../../, dockerfile: src/docker/Dockerfile }
+    command: ["./paxos_server", "--id=6", "--n=12"]
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+    ports: ["8086:8086"]
+    volumes:
+      - ./data/server6:/app/data
+    networks:
+      - paxos-net
+    depends_on:
+      etcd:
+        condition: service_healthy
+
+  server7:
+    build: { context: ../../, dockerfile: src/docker/Dockerfile }
+    command: ["./paxos_server", "--id=7", "--n=12"]
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+    ports: ["8087:8087"]
+    volumes:
+      - ./data/server7:/app/data
+    networks:
+      - paxos-net
+    depends_on:
+      etcd:
+        condition: service_healthy
+
+  server8:
+    build: { context: ../../, dockerfile: src/docker/Dockerfile }
+    command: ["./paxos_server", "--id=8", "--n=12"]
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+    ports: ["8088:8088"]
+    volumes:
+      - ./data/server8:/app/data
+    networks:
+      - paxos-net
+    depends_on:
+      etcd:
+        condition: service_healthy
+
+  server9:
+    build: { context: ../../, dockerfile: src/docker/Dockerfile }
+    command: ["./paxos_server", "--id=9", "--n=12"]
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+    ports: ["8089:8089"]
+    volumes:
+      - ./data/server9:/app/data
+    networks:
+      - paxos-net
+    depends_on:
+      etcd:
+        condition: service_healthy
+
+  server10:
+    build: { context: ../../, dockerfile: src/docker/Dockerfile }
+    command: ["./paxos_server", "--id=10", "--n=12"]
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+    ports: ["8090:8090"]
+    volumes:
+      - ./data/server10:/app/data
+    networks:
+      - paxos-net
+    depends_on:
+      etcd:
+        condition: service_healthy
+
+  server11:
+    build: { context: ../../, dockerfile: src/docker/Dockerfile }
+    command: ["./paxos_server", "--id=11", "--n=12"]
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+    ports: ["8091:8091"]
+    volumes:
+      - ./data/server11:/app/data
+    networks:
+      - paxos-net
+    depends_on:
+      etcd:
+        condition: service_healthy
+  
+networks:
+  paxos-net:
+    driver: bridge
