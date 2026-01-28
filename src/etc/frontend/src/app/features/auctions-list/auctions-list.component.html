@@ -1,0 +1,26 @@
+<h2>Auctions</h2>
+
+<div *ngIf="loading">Loading...</div>
+
+<div *ngFor="let a of auctions" class="auction" style="border: 1px solid #ccc; margin: 10px; padding: 10px;">
+  <h3>{{ a.item_name }}</h3>
+  <p>Highest Bid: ${{ a.highest_bid }}</p>
+  <p>Status: {{ a.is_open ? 'Open' : 'Closed' }}</p>
+
+  <div *ngIf="a.is_open">
+    <hr>
+    <div>
+      <label>User ID: </label>
+      <input #uid type="number" placeholder="ID">
+    </div>
+    <div>
+      <label>Bid Amount: </label>
+      <input #amt type="number" placeholder="Amount">
+    </div>
+
+    <div style="margin-top: 10px;">
+      <button (click)="placeBid(a, +uid.value, +amt.value)">Place Bid</button>
+      <button (click)="closeAuction(a, +uid.value)" style="color: red;">Close Auction</button>
+    </div>
+  </div>
+</div>

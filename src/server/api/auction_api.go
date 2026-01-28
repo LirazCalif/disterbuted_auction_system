@@ -49,11 +49,13 @@ func (s *PaxosServer) StartAuctionInterface(port string) {
 	mux.HandleFunc("/create", s.HandleAuctionRequest)
 	mux.HandleFunc("/close", s.HandleAuctionRequest)
 	mux.HandleFunc("/delete", s.HandleAuctionRequest)
+    mux.HandleFunc("/register", s.HandleRegisterRequest)
 
 	// sequential read
 	mux.HandleFunc("/status", s.HandleGetItems)
 	mux.HandleFunc("/status/name", s.HandleFindByName)
-	mux.HandleFunc("/status/id", s.HandleFindByID)
+	mux.HandleFunc("/status/item_id", s.HandleFindItemByID)
+    mux.HandleFunc("/status/user_id", s.HandleFindUserByID)
 	mux.HandleFunc("/active", s.HandleActiveAuctions)
 
 	//linearzable read
@@ -64,7 +66,13 @@ func (s *PaxosServer) StartAuctionInterface(port string) {
 	//system
 	mux.HandleFunc("/info",   s.HandleSysInfo)
 
-	log.Printf("[Server %d] Auction REST API starting on port %s", s.ID, port)
+	mux.HandleFunc("/debug/peers", func(w http.ResponseWriter, r *http.Request) {
+		s.Mu.Lock()
+		defer s.Mu.Unlock()
+		fmt.Fprintf(w, "Server %d\nPeers connected: %d\nNumServers config: %d\nQuorum Type: %s", 
+			s.ID, len(s.Peers), s.MultiInstance.NumServers, s.MultiInstance.GetQuorumType())
+	})
+    log.Printf("[Server %d] Auction REST API starting on port %s", s.ID, port)
 
 	go func() {
         if err := http.ListenAndServe(":"+port, mux); err != nil {
@@ -109,15 +117,6 @@ func (s *PaxosServer) HandleAuctionRequest(w http.ResponseWriter, r *http.Reques
 
     cmdBytes, _ := cmd.Serialize()
 
-    if !s.IsLeader() {
-        if err := s.SubmitRequest(cmdBytes); err != nil {
-            http.Error(w, err.Error(), http.StatusServiceUnavailable)
-            return
-        }
-        w.Header().Set("Content-Type", "application/json")
-        fmt.Fprint(w, `{"status": "Success", "message": "Forwarded & Executed"}`)
-        return
-    }
 
     // setup Response Channel if Leader
     respChan := make(chan string, 1)
@@ -138,8 +137,20 @@ func (s *PaxosServer) HandleAuctionRequest(w http.ResponseWriter, r *http.Reques
     // wait for Consensus and Application to State Machine
     select {
     case res := <-respChan:
-        fmt.Fprint(w, res)
+        w.Header().Set("Content-Type", "application/json")
+        if cmd.Type == "CREATE_AUCTION" {
+            var itemID int
+            n, _ := fmt.Sscanf(res, "Success: Auction created with ID: %d", &itemID)
+            if n == 1 {
+                fmt.Fprintf(w, `{"status": "Success", "item_id": %d}`, itemID)
+                return
+            }
+        }
+        fmt.Fprintf(w, `{"status": "Success", "message": "%s"}`, res)
     case <-time.After(30 * time.Second):
+        s.AuctionSM.Mu.Lock()
+        delete(s.AuctionSM.Responses, cmd.Timestamp)
+        s.AuctionSM.Mu.Unlock()
         http.Error(w, "Timeout", http.StatusGatewayTimeout)
     }
 }
@@ -159,8 +170,8 @@ func (s *PaxosServer) HandleFindByName(w http.ResponseWriter, r *http.Request) {
     json.NewEncoder(w).Encode(items)
 }
 
-func (s *PaxosServer) HandleFindByID(w http.ResponseWriter, r *http.Request) {
-    idStr := r.URL.Query().Get("id")
+func (s *PaxosServer) HandleFindItemByID(w http.ResponseWriter, r *http.Request) {
+    idStr := r.URL.Query().Get("item_id")
     
     // convert string to int
     id, err := strconv.Atoi(idStr)
@@ -287,3 +298,76 @@ func (s *PaxosServer) HandleCreatorTotalRevenueLinear(w http.ResponseWriter, r *
         "consistency": "Linearizable",
     })
 }
+
+
+// handles user registration requests
+func (s *PaxosServer) HandleRegisterRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed. Use POST.", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cmd := state.Command{
+		Type:      state.RegisterUser,
+		Timestamp: time.Now().UnixNano(),
+	}
+
+	if ok, msg := s.AuctionSM.PreCheck(cmd); !ok {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
+
+	respChan := make(chan string, 1)
+	s.AuctionSM.Mu.Lock()
+	s.AuctionSM.Responses[cmd.Timestamp] = respChan
+	s.AuctionSM.Mu.Unlock()
+
+    cmdBytes, _ := cmd.Serialize()
+
+	if err := s.SubmitRequest(cmdBytes); err != nil {
+		s.AuctionSM.Mu.Lock()
+		delete(s.AuctionSM.Responses, cmd.Timestamp)
+		s.AuctionSM.Mu.Unlock()
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
+	select {
+	case res := <-respChan:
+		var userID int
+        fmt.Sscanf(res, "Success: Registered. Your UserID is: %d", &userID)
+        w.Header().Set("Content-Type", "application/json")
+        fmt.Fprintf(w, `{"status": "Success", "user_id": %d}`, userID)
+
+	case <-time.After(15 * time.Second):
+        s.AuctionSM.Mu.Lock()
+        delete(s.AuctionSM.Responses, cmd.Timestamp)
+        s.AuctionSM.Mu.Unlock()
+        http.Error(w, "Timeout waiting for registration", http.StatusGatewayTimeout)	}
+}
+
+func (s *PaxosServer) HandleFindUserByID(w http.ResponseWriter, r *http.Request) {
+    idStr := r.URL.Query().Get("user_id")
+    user_id, err := strconv.Atoi(idStr)
+    if err != nil {
+        http.Error(w, "Invalid User ID", http.StatusBadRequest)
+        return
+    }
+
+    all := s.AuctionSM.GetAllItems()
+    var userItems []*state.AuctionItem
+    
+    for _, item := range all {
+        if item.CreatorID == int32(user_id) {
+            userItems = append(userItems, item)
+        }
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "user_id": user_id,
+        "auctions_created": userItems,
+    })
+}
+
+

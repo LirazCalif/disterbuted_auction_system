@@ -4,6 +4,8 @@ import (
 	"sync"
     "os"
 	"encoding/json"
+    "fmt"
+    "log"
 )
 
 type AuctionItem struct {
@@ -30,6 +32,7 @@ const (
     CloseAuction CommandType = "CLOSE_AUCTION"
 	CreateAuction CommandType = "CREATE_AUCTION"
 	DeleteAuction CommandType = "DELETE_AUCTION"
+    RegisterUser CommandType = "REGISTER"
 
 )
 
@@ -39,12 +42,16 @@ type AuctionStateMachine struct {
 
 	Responses map[int64]chan string
 	LastAppliedIdx int64
+    NextItemID int32
+    NextUserID int32
 }
 
 func NewAuctionStateMachine() *AuctionStateMachine {
     return &AuctionStateMachine{
         Items: make(map[int32]*AuctionItem),
 		Responses: make(map[int64]chan string),
+        NextItemID: 1,
+        NextUserID: 1,
     }
 }
 
@@ -60,9 +67,15 @@ func (s *AuctionStateMachine) ApplyBatch(commands []Command, logIdx0 int64) []st
 
 //handles the execution of commands from the replicated log.
 func (s *AuctionStateMachine) Apply(cmd Command, logIdx int64) string {
-	var result string
+	s.Mu.Lock()
+    defer s.Mu.Unlock()
+    s.ensuremaps()
+
+    var result string
 
 	switch cmd.Type {
+    case RegisterUser:
+        result = s.handleRegister(cmd)
     case CreateAuction:
         result = s.handleCreate(cmd)
     case PlaceBid:
@@ -75,15 +88,18 @@ func (s *AuctionStateMachine) Apply(cmd Command, logIdx int64) string {
         result = "Error: Unknown command"
     }
 	//Checks if an HTTP handler waiting for the result
-	s.Mu.Lock()
+
 
 	s.LastAppliedIdx = logIdx
 
     if ch, ok := s.Responses[cmd.Timestamp]; ok {
-        ch <- result               
-        delete(s.Responses, cmd.Timestamp) 
+        select {
+		case ch <- result:
+		default:
+			log.Printf("Warning: handler for timestamp %d not listening", cmd.Timestamp)
+		}
+		delete(s.Responses, cmd.Timestamp) 
     }
-    s.Mu.Unlock()
 
     return result
 
@@ -93,28 +109,27 @@ func (s *AuctionStateMachine) Apply(cmd Command, logIdx int64) string {
 
 //add item to state machine
 func (s *AuctionStateMachine) handleCreate(cmd Command) string {
-    s.Mu.Lock()
-    defer s.Mu.Unlock()
 
 	if err := s.validateStates(cmd); err != "" {
 		return err
 	}
 
-    s.Items[cmd.ItemID] = &AuctionItem{
+    id := s.NextItemID
+	s.NextItemID++
+
+    s.Items[id] = &AuctionItem{
         ItemName:          cmd.ItemName,
-        ItemID:            cmd.ItemID,
+        ItemID:            id,
         HighestBid:        cmd.Amount, 
         WinnerID:          -1,         // No winner
         CreatorID:         cmd.UserID,
         IsOpen:            true,
     }
-    return "Success: Auction created"
+    return fmt.Sprintf("Success: Auction created with ID: %d", id)
 }
 
 // update the highest bidder logic
 func (s *AuctionStateMachine) handleBid(cmd Command) string {
-    s.Mu.Lock()
-    defer s.Mu.Unlock()
 
 	if err := s.validateStates(cmd); err != "" {
 		return err
@@ -129,8 +144,6 @@ func (s *AuctionStateMachine) handleBid(cmd Command) string {
 // Closes the auction so no more bids can be placed.
 // Only the Creator can close the auction
 func (s *AuctionStateMachine) handleClose(cmd Command) string {
-    s.Mu.Lock()
-    defer s.Mu.Unlock()
 
 	if err := s.validateStates(cmd); err != "" {
 		return err
@@ -142,8 +155,6 @@ func (s *AuctionStateMachine) handleClose(cmd Command) string {
 
 // Removes the auction
 func (s *AuctionStateMachine) handleDelete(cmd Command) string {
-    s.Mu.Lock()
-    defer s.Mu.Unlock()
 
 	if err := s.validateStates(cmd); err != "" {
         return err
@@ -153,22 +164,42 @@ func (s *AuctionStateMachine) handleDelete(cmd Command) string {
     return "Success: Auction deleted"
 }
 
+func (s *AuctionStateMachine) handleRegister(cmd Command) string {
+
+    id := s.NextUserID
+    s.NextUserID++
+
+    return fmt.Sprintf("Success: Registered. Your UserID is: %d", id)
+}
+
 //Validation rules
 
 //is the command's data valid  - stateless checks
 func (c *Command) Basic_Valid() string {
-    if c.ItemID < 0 {
-        return "Rejected: Invalid item ID"
+
+    if c.Type == RegisterUser {
+        return ""
     }
-	if c.Type == CreateAuction && c.ItemName == "" {
-        return "rejected: Item name cannot be empty"
+
+    if c.Type == CreateAuction {
+        if c.UserID <= 0 {
+            return "Rejected: You must be registered to perform this action"
+        }
+        if c.ItemName == "" {
+            return "rejected: Item name cannot be empty"
+        }
+        return "" 
+    }
+
+    if c.ItemID <= 0 {
+        return "Rejected: Invalid item ID"
     }
     if c.Type == PlaceBid {
         if c.Amount <= 0 {
             return "Rejected: Bid amount must be positive"
         }
-        if c.UserID < 0 {
-            return "Rejected: Invalid user ID"
+        if c.UserID <= 0 {
+            return "Rejected: You must be registered to perform this action"
         }
     }
     return ""
@@ -176,14 +207,14 @@ func (c *Command) Basic_Valid() string {
 
 //validations for different states - stateful checks
 func (s *AuctionStateMachine) validateStates(cmd Command) string {
+    
+    if cmd.Type == CreateAuction {
+		return ""
+	}
+
     item, exists := s.Items[cmd.ItemID]
 
     switch cmd.Type {
-    case CreateAuction:
-        if exists {
-            return "Rejected: Item ID already exists"
-        }
-
     case PlaceBid:
         if !exists {
             return "Rejected: Item not found"
@@ -224,7 +255,12 @@ func (s *AuctionStateMachine) PreCheck(cmd Command) (bool, string) {
     }
 
 	s.Mu.Lock()
+    s.ensuremaps()
     defer s.Mu.Unlock()
+
+    if cmd.Type == RegisterUser || cmd.Type == CreateAuction {
+        return true, ""
+    }
 
     if err := s.validateStates(cmd); err != "" {
         return false, err
@@ -239,6 +275,8 @@ func (s *AuctionStateMachine) PreCheck(cmd Command) (bool, string) {
 // Returns all items matching a name.
 func (s *AuctionStateMachine) FindItemByName(name string) []*AuctionItem {
 	s.Mu.Lock()
+    s.ensuremaps()
+
 	defer s.Mu.Unlock()
 	var results []*AuctionItem
 	for _, item := range s.Items {
@@ -252,6 +290,7 @@ func (s *AuctionStateMachine) FindItemByName(name string) []*AuctionItem {
 // Returns all items matching an id.
 func (s *AuctionStateMachine) FindItemByID(ID int32) (*AuctionItem, bool) {
     s.Mu.Lock()
+    s.ensuremaps()
     defer s.Mu.Unlock()
     item, exists := s.Items[ID]
 	if !exists {
@@ -265,6 +304,7 @@ func (s *AuctionStateMachine) FindItemByID(ID int32) (*AuctionItem, bool) {
 //a list of all current auctions
 func (s *AuctionStateMachine) GetAllItems() []*AuctionItem {
     s.Mu.Lock()
+    s.ensuremaps()
     defer s.Mu.Unlock()
     var results []*AuctionItem
     for _, item := range s.Items {
@@ -303,12 +343,30 @@ func DeserializeBatch(data []byte) ([]Command, error) {
     return commands, err
 }
 
+type SnapshotData struct {
+    Items      map[int32]*AuctionItem `json:"items"`
+    NextID     int32                  `json:"next_id"`
+    NextUserID int32 `json:"next_user_id"`
+}
+
 func (s *AuctionStateMachine) SaveSnapshot(filePath string) error {
     s.Mu.Lock()
-    defer s.Mu.Unlock()
-    data, err := json.Marshal(s.Items)
+    s.ensuremaps()
+    datastruct := SnapshotData{
+        Items:  s.Items,
+        NextID: s.NextItemID,
+        NextUserID: s.NextUserID,
+    }
+    data, err := json.Marshal(datastruct)
+    s.Mu.Unlock()
+
     if err != nil { return err }
-    return os.WriteFile(filePath, data, 0644)
+
+    tempPath := filePath + ".tmp"
+    if err := os.WriteFile(tempPath, data, 0644); err != nil {
+        return err
+    }
+    return os.Rename(tempPath, filePath)
 }
 
 func (s *AuctionStateMachine) LoadSnapshot(filePath string) error {
@@ -316,7 +374,28 @@ func (s *AuctionStateMachine) LoadSnapshot(filePath string) error {
     if err != nil { return err } 
     s.Mu.Lock()
     defer s.Mu.Unlock()
-    return json.Unmarshal(data, &s.Items)
+
+    var datastruct SnapshotData
+    if err := json.Unmarshal(data, &datastruct); err != nil {
+        return err
+    }
+
+    s.Items = datastruct.Items
+    
+     s.ensuremaps()
+
+    s.NextItemID = datastruct.NextID
+    s.NextUserID = datastruct.NextUserID
+    return nil
+}
+
+func (s *AuctionStateMachine) ensuremaps() {
+	if s.Items == nil {
+		s.Items = make(map[int32]*AuctionItem)
+	}
+	if s.Responses == nil {
+		s.Responses = make(map[int64]chan string)
+	}
 }
 
 

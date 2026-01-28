@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"log"
 	"net"
 	"sync"
@@ -9,11 +8,17 @@ import (
 	"fmt"
 	"strings"
 	"bytes"
+	"os"
+	"context"
+	"math"
 
 	pb "paxos/proto"
 	"paxos/src/server/paxos"
 	"paxos/src/server/election"
 	"paxos/src/server/state"
+	"paxos/src/server/storage"
+	"paxos/src/server/membership"
+
 
 	"google.golang.org/grpc"
 )
@@ -48,6 +53,12 @@ type PaxosServer struct {
 	//snapshots
 	SnapshotPath  string
 
+	//wall
+	WAL *storage.WALManager
+
+	//membership
+	Membership *membership.MembershipManager
+
 }
 
 // PaxosMessage is used for internal messaging or non-gRPC transport
@@ -60,7 +71,25 @@ type PaxosMessage struct {
 	AcceptedValue  []byte
 }
 
-// Prepare: handles a paxos Prepare request. Follower
+
+func NewPaxosServer(id int32, snapshotPath string, walPath string) *PaxosServer {
+	return &PaxosServer{
+		ID:            id,
+		Peers:         make(map[int32]pb.PaxosClient),
+		MultiInstance: paxos.NewMultiPaxosInstance(1), 
+		LastApplied:   -1,
+		kvStore:       make(map[string]string),
+		requestChan:   make(chan []byte, 5000),
+		batchSize:     100,
+		batchTimeout:  200 * time.Millisecond,
+		pipelineLimit: make(chan struct{}, 200),
+		AuctionSM:     state.NewAuctionStateMachine(),
+		SnapshotPath:  snapshotPath,
+		WAL:           storage.NewWALManager(walPath),
+	}
+}
+
+// Prepare: handles a paxos Prepare request - follower side
 func (s *PaxosServer) Prepare(
 	ctx context.Context,
 	req *pb.PrepareRequest,
@@ -72,6 +101,10 @@ func (s *PaxosServer) Prepare(
 	inst := s.MultiInstance.GetInstance(req.InstanceId) 
     
     resp := inst.Prepare_Instance(req.ProposalId)
+	if s.WAL != nil {
+		go s.WAL.PersistState(s.MultiInstance.Instances) 
+	}
+
 
 	log.Printf("[Server %d] Prepare from %d proposal=%d promised=%v",
 		s.ID, req.SenderId, req.ProposalId, resp.Promised)
@@ -79,7 +112,7 @@ func (s *PaxosServer) Prepare(
 	return resp, nil
 }
 
-// Accept: handles a paxos Accept request. Follower
+// Accept: handles a paxos Accept request - follower side
 func (s *PaxosServer) Accept(
 	ctx context.Context,
 	req *pb.AcceptRequest,
@@ -90,6 +123,9 @@ func (s *PaxosServer) Accept(
 
 	inst := s.MultiInstance.GetInstance(req.InstanceId)
 	resp := inst.Accept_Instance(req.ProposalId, req.Value)
+	if s.WAL != nil {
+		go s.WAL.PersistState(s.MultiInstance.Instances)
+	}
 
 
 	log.Printf("[Server %d] Accept from %d proposal=%d accepted=%v",
@@ -99,64 +135,56 @@ func (s *PaxosServer) Accept(
 }
 
 // Start: starts the paxos gRPC server on the given port.
-func Start(
-	id int32,
-	serverIDs []int32,
-	peers map[int32]pb.PaxosClient,
-	port string,
-	etcdEndpoints []string,
-	snapshotPath string,
-) {
-	// Convert int to int32 for internal storage
-	
-	elect_manager, err := election.NewElectionManager(id, etcdEndpoints)
+func Start(server *PaxosServer, port string, etcdEndpoints []string) {
+
+	elect, err := election.NewElectionManager(server.ID, etcdEndpoints)
     if err != nil {
-        log.Fatalf("Failed to init election manager: %v", err)
+        log.Fatalf("failed to init election manager: %v", err)
+    }
+    server.Election = elect
+
+	//internal port
+	lis, err := net.Listen("tcp", ":"+port)
+    if err != nil {
+        log.Fatalf("failed to listen on gRPC port %s: %v", port, err)
     }
 
+    grpcServer := grpc.NewServer()
+    pb.RegisterPaxosServer(grpcServer, server)
+	//initial variables
+	server.applyCond = sync.NewCond(&server.Mu)
 
-	server := &PaxosServer{
-		ID:       id,
-		Peers:    peers,
-		MultiInstance: paxos.NewMultiPaxosInstance(len(serverIDs)),
-		Election: elect_manager,
-		LastApplied: -1,
-		kvStore:     make(map[string]string),
-
-		requestChan:  make(chan []byte, 5000),
-		batchSize:    100,
-		batchTimeout: 50 * time.Millisecond,
-
-		pipelineLimit: make(chan struct{}, 50),
-		SnapshotPath:  snapshotPath,
-		
-	}
-
-	//build the state machine
-	server.BuildAuctionStateMachine()
 
 	if err := server.AuctionSM.LoadSnapshot(server.SnapshotPath); err == nil {
-        log.Printf("[Server %d] Recovery: State loaded from %s", id, server.SnapshotPath)
+		log.Printf("[Server %d] recovery: loaded state from %s", server.ID, server.SnapshotPath)
 		server.LastApplied = int32(server.AuctionSM.LastAppliedIdx)
+
+		}
+	
+	//recovery from wall
+	if loadedInstances, err := server.WAL.LoadState(); err == nil && len(loadedInstances) > 0 {
+		log.Printf("[Server %d] recovery: loaded %d instances from WAL", server.ID, len(loadedInstances))
+		server.MultiInstance.Instances = loadedInstances
+		
+		var maxIdx int32 = -1
+		for idx := range loadedInstances {
+			if idx > maxIdx {
+				maxIdx = idx
+			}
+		}
+		if maxIdx+1 > server.MultiInstance.NextIndex {
+			server.MultiInstance.NextIndex = maxIdx + 1
+		}
 	}
+	
 
 	//start the REST API
-	numericPort := 8080 + int(id) 
+	numericPort := 8080 + int(server.ID) 
 	apiPort := fmt.Sprintf("%d", numericPort)
 	server.StartAuctionInterface(apiPort)
 
-
-	server.applyCond = sync.NewCond(&server.Mu)
 	
 	go server.processBatches()
-
-	lis, err := net.Listen("tcp", ":"+port)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	grpcServer := grpc.NewServer()
-	pb.RegisterPaxosServer(grpcServer, server)
 
 	go func() {
 		if err := grpcServer.Serve(lis); err != nil {
@@ -164,35 +192,36 @@ func Start(
 		}
 	}()
 
-	log.Printf("Paxos server %d started on %s", id, port)
+	log.Printf("paxos server %d started on %s", server.ID, port)
 
 	go func() {
-        // Run every 60 seconds to clean up RAM
+        // run every 60 seconds to clean up RAM
         ticker := time.NewTicker(60 * time.Second)
         for range ticker.C {
-            // Only the leader calculates the global threshold
+            // only the leader calculates global threshold
             if server.IsLeader() {
                 server.DisposeOldLogs()
             }
         }
     }()
 
-	log.Printf("[DEBUG-CHECK] Server %d is attempting to start campaign NOW...", id)
+	log.Printf("[DEBUG] server %d is try to start campaign now", server.ID)
 
-	elect_manager.StartCampaign(context.Background())
+	go server.Election.StartCampaign(context.Background())
 
 	go func() {
-        time.Sleep(5 * time.Second) 
+		waitDuration := time.Duration(5 + server.ID) * time.Second
+		log.Printf("[Server %d] Waiting %v before starting SyncLog to avoid boot storm", server.ID, waitDuration)
+        time.Sleep(waitDuration)
         server.SyncLog()
     }()
 
-
-	select {}
+	select{}
 
 }
 
 
-// LogMessage helper restored. Updated IDs to int32 to match Server IDs.
+// LogMessage helper restored
 func LogMessage(serverID, targetID int32, msgType string, instanceID int32, value []byte) {
 	log.Printf("[Server %d to %d] %s Instance=%d, Value=%s", serverID, targetID, msgType, instanceID, string(value))
 }
@@ -219,21 +248,26 @@ func (s *PaxosServer) Propose(originalValue []byte) int32 {
 	}
 
 	s.Mu.Lock()
+	if s.MultiInstance.NextIndex > s.LastApplied+1 {
+		log.Printf("[Leader %d] Gap detected! Resetting NextIndex from %d to %d", 
+			s.ID, s.MultiInstance.NextIndex, s.LastApplied+1)
+		s.MultiInstance.NextIndex = s.LastApplied + 1
+	}
 	idx := s.MultiInstance.NextInstance()
 	inst := s.MultiInstance.GetInstance(idx)
 	
-	// is leader Stable
+	// is leader stable
 	canSkipPrepare := s.Election.IsStableLeader()
 
 	var proposalID int64
 	var valueToPropose = originalValue
+	
 
 	if canSkipPrepare {
-		// Phase 2 Only
 		proposalID = s.Election.GetCurrentTermProposalID()
-		log.Printf("[Leader %d] Skipping Prepare (Multi-Paxos) for Instance %d using ProposalID %d", s.ID, idx, proposalID)
+		log.Printf("[Leader %d] skipping Prepare for instance %d using ProposalID %d", s.ID, idx, proposalID)
 		
-		// Implicitly promise ourselves
+		// implicitly promise ourselves
 		inst.ResetRound()
 		inst.Promises[s.ID] = true 
 		s.Mu.Unlock()
@@ -242,41 +276,72 @@ func (s *PaxosServer) Propose(originalValue []byte) int32 {
 		s.sendAccept(idx, proposalID, valueToPropose)
 
 	} else {
-		//  Phase 1 + Phase 2
 		s.Mu.Unlock() 
-		
+
+		quorumChan := make(chan bool, 1)
 		proposalID = generateProposalID(s.ID)
 		var highestAcceptedID int64 = -1
+		var waitgroup sync.WaitGroup
+		var responders []int32
+		var mu sync.Mutex
+		
 
 		s.Mu.Lock()
         inst.Promises[s.ID] = true 
+		currentPeers := make(map[int32]pb.PaxosClient)
+		for id, client := range s.Peers {
+			currentPeers[id] = client
+		}
         s.Mu.Unlock()
 
 		//  send Prepare
-		for peerID, peer := range s.Peers {
-			resp, err := peer.Prepare(context.Background(), &pb.PrepareRequest{
-				ProposalId: proposalID,
-				SenderId:   s.ID,
-				InstanceId: idx,
-			})
+		for peerID, peer := range currentPeers{
+			waitgroup.Add(1)
+			go func(pID int32, pClient pb.PaxosClient) {
+				defer waitgroup.Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				resp, err := peer.Prepare(ctx, &pb.PrepareRequest{
+					ProposalId: proposalID,
+					SenderId:   s.ID,
+					InstanceId: idx,
+				})
 
-			if err != nil {
-				log.Printf("Error contacting peer %d: %v", peerID, err)
-				continue
-			}
-
-			if resp.Promised {
-				s.Mu.Lock()
-				inst.Promises[peerID] = true
-				s.Mu.Unlock()
-
-				if resp.AcceptedId > 0 && resp.AcceptedId > highestAcceptedID {
-					highestAcceptedID = resp.AcceptedId
-					valueToPropose = resp.AcceptedValue
+				if err != nil {
+					log.Printf("Error contacting peer %d: %v", peerID, err)
+					return
 				}
-			}
-		}
 
+				if resp.Promised {
+					s.Mu.Lock()
+					inst.Promises[pID] = true
+					if inst.HasElectionQuorum(s.MultiInstance) {
+						select { case quorumChan <- true: default: }
+					}
+					s.Mu.Unlock()
+					mu.Lock()
+					responders = append(responders, pID)
+					if resp.AcceptedId > 0 && resp.AcceptedId > highestAcceptedID {
+						highestAcceptedID = resp.AcceptedId
+						valueToPropose = resp.AcceptedValue
+					}
+					mu.Unlock()
+				}
+			}(peerID, peer)
+
+		}
+		allDone := make(chan struct{})
+		go func() { waitgroup.Wait(); close(allDone) }()
+		
+		log.Printf("[DEBUG %d] Phase 1 finished. Responders: %v. Needed: %d", 
+			s.ID, responders, s.MultiInstance.NumServers/2+1)
+
+		select {
+		case <-quorumChan:
+		case <-allDone:
+		case <-time.After(15 * time.Second):
+		}
+		
 		s.Mu.Lock()
 		hasQuorum := inst.HasElectionQuorum(s.MultiInstance)
 		s.Mu.Unlock()
@@ -285,12 +350,12 @@ func (s *PaxosServer) Propose(originalValue []byte) int32 {
 			s.Election.SetCurrentTermProposalID(proposalID)
 			s.Election.MarkStable(true)
 
-			log.Printf("[Leader %d] Phase 1 successful. Marked as STABLE for future instances.", s.ID)
+			log.Printf("[Leader %d] Phase 1 successful. Marked as stable for future instances.", s.ID)
 			
 			// Send Accept
 			s.sendAccept(idx, proposalID, valueToPropose)
 		} else {
-			log.Printf("[Leader %d] Failed to reach Prepare Quorum", s.ID)
+			log.Printf("[Leader %d] failed to reach Prepare quorum", s.ID)
 		}
 	}
 
@@ -299,53 +364,99 @@ func (s *PaxosServer) Propose(originalValue []byte) int32 {
 
 func (s *PaxosServer)  sendAccept(idx int32, proposalID int64, value []byte) {
 	inst := s.MultiInstance.GetInstance(idx)
+	s.Mu.Lock()
     inst.Accepts[s.ID] = true
+	currentPeers := make(map[int32]pb.PaxosClient)
+    for id, client := range s.Peers {
+        currentPeers[id] = client
+    }
+    s.Mu.Unlock()
 
-	for peerID, peer := range s.Peers {
-		resp, err := peer.Accept(context.Background(), &pb.AcceptRequest{
-			ProposalId: proposalID,
-			Value:      value,
-			SenderId:   s.ID,
-			InstanceId: idx,
-		})
+	if s.WAL != nil {
+		go s.WAL.PersistState(s.MultiInstance.Instances)
+	}
+	quorumChan := make(chan bool, 1)
+	allDone := make(chan struct{})
+	var waitgroup sync.WaitGroup
+	var acceptors []int32
+	var accMu sync.Mutex
 
-		if err != nil {
-			log.Printf("Error when sending Accept to peer %d: %v", peerID, err)
-			continue
-		}
 
-		if resp.Accepted {
-			inst.Accepts[peerID] = true
-		}
+	for peerID, peer := range currentPeers {
+		waitgroup.Add(1)
+		go func(id int32, client pb.PaxosClient) {
+        	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+        	defer cancel()
+        
+			resp, err := client.Accept(ctx, &pb.AcceptRequest{
+				ProposalId: proposalID,
+				Value:      value,
+				SenderId:   s.ID,
+				InstanceId: idx,
+			})
+			if err == nil && resp.Accepted {
+				s.Mu.Lock()
+				inst.Accepts[id] = true
+
+				if inst.HasWriteQuorum(s.MultiInstance) {
+					select {
+					case quorumChan <- true:
+					default:
+					}
+				}
+				s.Mu.Unlock()
+
+				accMu.Lock()
+				acceptors = append(acceptors, id)
+				accMu.Unlock()
+			}
+		}(peerID, peer)
+	}
+	go func() { waitgroup.Wait(); close(allDone) }()
+
+	select {
+	case <-quorumChan: 
+	case <-allDone:   
+	case <-time.After(15 * time.Second): 
 	}
 
-	if inst.HasWriteQuorum(s.MultiInstance) {
+	s.Mu.Lock()
+	reached := inst.HasWriteQuorum(s.MultiInstance)
+	s.Mu.Unlock()
+	
+	log.Printf("[DEBUG %d] Phase 2 finished. Acceptors: %v. Quorum Reached: %v", 
+		s.ID, acceptors, reached)
+
+	if reached {
 		inst.Commit(value)
-		log.Printf("[Leader %d] COMMIT value=%s at index=%d", s.ID, string(value), idx)
+		log.Printf("[Leader %d] commit value=%s at index=%d", s.ID, string(value), idx)
 
 		s.Mu.Lock()
-        s.applyLog() // Leader updates its own KV store immediately
-        s.Mu.Unlock()
+        s.applyLog() // leader updates its own KV store immediately
+        commitPeers := make(map[int32]pb.PaxosClient)
+        for id, p := range s.Peers {
+            commitPeers[id] = p
+        }
+		s.Mu.Unlock()
 
 		// propagate commit to peers
-		for peerID, peer := range s.Peers {
+		for peerID, peer := range commitPeers {
 				go func(p pb.PaxosClient, pid int32) {
 					
-					_, err := p.Commit(context.Background(), &pb.CommitRequest{
+					p.Commit(context.Background(), &pb.CommitRequest{
 						ProposalId: proposalID,
 						Value:      value,
 						SenderId:   s.ID,
 						InstanceId: idx,
 					})
-					if err != nil {
-						log.Printf("Failed to send Commit to peer %d: %v", pid, err)
-					}
+
 				}(peer, peerID)
-			}
+		}
+		
 	}
 }
 
-// Commit: handles a paxos Commit request. (Follower side)
+// Commit: handles a paxos Commit request. follower 
 func (s *PaxosServer) Commit(
     ctx context.Context,
     req *pb.CommitRequest,
@@ -357,6 +468,10 @@ func (s *PaxosServer) Commit(
     inst := s.MultiInstance.GetInstance(req.InstanceId)
 	inst.Commit(req.Value)
 
+	if s.WAL != nil {
+		go s.WAL.PersistState(s.MultiInstance.Instances)
+	}
+
 	for {
 			curr := s.MultiInstance.GetInstance(s.MultiInstance.NextIndex)
 			if curr.IsCommitted {
@@ -364,7 +479,7 @@ func (s *PaxosServer) Commit(
 			} else {
 				break
 			}
-		}
+	}
 
 	s.applyLog()
 
@@ -375,12 +490,20 @@ func (s *PaxosServer) Commit(
 
 // recovery function
 
-// GetLogState: Returns the current log state to a recovering node
+// returns the current log state to a recovering node
 func (s *PaxosServer) GetLogState(ctx context.Context, req *pb.GetLogRequest) (*pb.GetLogResponse, error) {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
 
 	var entries []*pb.LogEntry
+	var snapshotBytes []byte
+    var snapshotIdx int32 = 0
+
+	//read snapshots from disk if exist
+	if content, err := os.ReadFile(s.SnapshotPath); err == nil {
+        snapshotBytes = content
+        snapshotIdx = s.LastApplied
+    }
 
 	// Loop through all instances
 	for i := int32(0); i < s.MultiInstance.NextIndex; i++ {
@@ -397,41 +520,73 @@ func (s *PaxosServer) GetLogState(ctx context.Context, req *pb.GetLogRequest) (*
 	return &pb.GetLogResponse{
 		NextIndex:  s.MultiInstance.NextIndex,
 		LogEntries: entries,
+		Snapshot:      snapshotBytes,
+        SnapshotIndex: snapshotIdx,
 	}, nil
 }
-// SyncLog asks peers for their logs and updates the local state
+// function asks peers for their logs and updates the local state
 func (s *PaxosServer) SyncLog() {
-    log.Println("[SyncLog] Starting state transfer from peers")
+    log.Println("[SyncLog] starting state transfer from peers")
     
-    var maxNextIndex int32 = 0
+    var resMu sync.Mutex
+	var maxNextIndex int32 = 0
     var bestLog []*pb.LogEntry
+	var bestSnapshot []byte
+    var bestSnapshotIdx int32 = -1
+	var waitgroup sync.WaitGroup
 
-    //  Ask all peers for their log
+    //  ask peers for their log
     for id, peer := range s.Peers {
-        ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-        resp, err := peer.GetLogState(ctx, &pb.GetLogRequest{SenderId: s.ID})
-        cancel()
+		waitgroup.Add(1)
+		go func(pID int32, pClient pb.PaxosClient) {
+			defer waitgroup.Done()
+        	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+        	resp, err := peer.GetLogState(ctx, &pb.GetLogRequest{SenderId: s.ID})
+        	cancel()
 
-        if err != nil {
-            log.Printf("[SyncLog] Failed to contact peer %d: %v", id, err)
-            continue
-        }
+			if err != nil {
+				log.Printf("[SyncLog] can't contact peer %d: %v", id, err)
+				return
+			}
+			resMu.Lock()
 
-        // Adopt the longest log found
-        if resp.NextIndex > maxNextIndex {
-            maxNextIndex = resp.NextIndex
-            bestLog = resp.LogEntries
-            log.Printf("[SyncLog] Found longer log from peer %d (Length: %d)", id, maxNextIndex)
-        }
-    }
+			// Adopt the longest log found
+			if resp.SnapshotIndex > bestSnapshotIdx {
+				bestSnapshotIdx = resp.SnapshotIndex
+				bestSnapshot = resp.Snapshot
+				maxNextIndex = resp.NextIndex
+				bestLog = resp.LogEntries
+				log.Printf("[SyncLog] found new snapshot from peer %d, in Idx: %d", id, bestSnapshotIdx)
+			} else if resp.NextIndex > maxNextIndex {
+				maxNextIndex = resp.NextIndex
+				bestLog = resp.LogEntries
+				log.Printf("[SyncLog] found longer log from peer %d with length: %d", id, maxNextIndex)
+
+			}
+			resMu.Unlock()
+		}(id, peer)
+
+	}
+	waitgroup.Wait()
+
+	if bestSnapshot != nil && bestSnapshotIdx > s.LastApplied {
+    	_ = os.WriteFile(s.SnapshotPath, bestSnapshot, 0644)
+	}
 
     // Apply the log to local state
     s.Mu.Lock()
-    defer s.Mu.Unlock()
 
-    // Reset local state to match the best peer
-    s.MultiInstance.NextIndex = maxNextIndex
-    
+	//install snapshots
+	if bestSnapshot != nil && bestSnapshotIdx > s.LastApplied {
+		log.Printf("[SyncLog] Installing new snapshot (Index %d)", bestSnapshotIdx)
+    	if err := s.AuctionSM.LoadSnapshot(s.SnapshotPath); err != nil {
+        	log.Printf("can't write snapshot: %v", err)
+			s.LastApplied = bestSnapshotIdx
+        	s.MultiInstance.NextIndex = bestSnapshotIdx + 1
+    	}
+	}
+
+    // Reset local state 
 	for _, entry := range bestLog {
 			inst := s.MultiInstance.GetInstance(entry.InstanceId)
 			if !inst.IsCommitted {
@@ -440,23 +595,25 @@ func (s *PaxosServer) SyncLog() {
 	}
 	
 	s.applyLog()
+	s.Mu.Unlock()
+	s.DisposeOldLogs()
 
-    log.Printf("[SyncLog] Recovery complete. Synced up to Index %d", maxNextIndex)
+    log.Printf("[SyncLog] completed recovery")
 }
 
 
 // improvement 1: better follower read - reads without full data payload
-// New RPC Handler: Leader answers what the latest committed index is
+// RPC handler - leader answers what the latest committed index is
 func (s *PaxosServer) GetReadIndex(ctx context.Context, req *pb.ReadIndexRequest) (*pb.ReadIndexResponse, error) {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
 
-	// Verify Leadership via Etcd 
+	// verify leader with etcd 
 	if !s.IsLeader() {
 		return nil, fmt.Errorf("server %d is not the leader", s.ID)
 	}
 
-	// Find the highest committed instance in our log
+	// find the highest committed instance in log
 	var maxCommitted int32 = -1
 	
 	// checking from the end of the log
@@ -470,51 +627,47 @@ func (s *PaxosServer) GetReadIndex(ctx context.Context, req *pb.ReadIndexRequest
 	return &pb.ReadIndexResponse{LeaderCommitIndex: maxCommitted}, nil
 }
 
-//  Handle Read Request (Linearizable Read)
+//  handle read request - linearizable read
 func (s *PaxosServer) HandleRead(key string) (string, error) {
-	// 1. If we are the Leader, we can read directly (Must verify leadership first!)
+	// If the Leader read directly 
 	if s.IsLeader() {
 		s.Mu.Lock()
 		defer s.Mu.Unlock()
 		return s.kvStore[key], nil
 	}
 
-	// 2. If we are a Follower, ask Leader for the "ReadIndex"
-	// (Unlock Mu while doing RPC to avoid blocking internal commits)
+	// if the follower ask the leader for readindex
 	leaderID := s.Election.GetLeaderID()
 	leaderClient, ok := s.Peers[leaderID]
 	if !ok {
 		return "", fmt.Errorf("leader %d not found in peers", leaderID) 
 	}
 
-	// Ask the leader: "What is the latest committed index?"
-	// The leader will check its Etcd lease inside this call.
 	resp, err := leaderClient.GetReadIndex(context.Background(), &pb.ReadIndexRequest{})
 	if err != nil {
 		return "", fmt.Errorf("failed to get read index from leader: %v", err)
 	}
 	readIndex := resp.LeaderCommitIndex
 
-	// 3. Wait until our local state catches up to readIndex
+	// wait our local state catches up to readindex
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
 
 	for s.LastApplied < readIndex {
-		// Use Cond Wait instead of sleep for efficiency
+		// use cond wait instead of sleep for efficiency
 		s.applyCond.Wait()
 	}
 
-	// 4. Now safe to read locally
 	return s.kvStore[key], nil
 }
 
-// applyLog: Applies committed entries to the KV store
+// applies committed entries to the KV store
 func (s *PaxosServer) applyLog() {
 	for {
 		nextIdx := s.LastApplied + 1
 		inst := s.MultiInstance.GetInstance(nextIdx)
 
-		// Stop if the next instance isn't committed yet
+		// stop if the next instance yet committed
 		if !inst.IsCommitted {
 			break
 		}
@@ -536,16 +689,19 @@ func (s *PaxosServer) applyLog() {
 				s.kvStore[parts[0]] = parts[1]
 			}
 		}
-
 		s.LastApplied = nextIdx
-	
-        err := s.AuctionSM.SaveSnapshot(s.SnapshotPath)
-        if err != nil {
-            log.Printf("[Server %d] Snapshot Error: %v", s.ID, err)
-        } else {
-            log.Printf("[Server %d] State saved index %d", s.ID, s.LastApplied)
-        }
-    }
+
+	}
+
+	go func(idx int32) {
+		err := s.AuctionSM.SaveSnapshot(s.SnapshotPath)
+		if err != nil {
+			log.Printf("[Server %d] Snapshot Error: %v", s.ID, err)
+		} else {
+			log.Printf("[Server %d] State saved index %d", s.ID, s.LastApplied)
+		}
+	}(s.LastApplied)
+    
 	
 	// notify waiting readers
 	s.applyCond.Broadcast()
@@ -554,7 +710,7 @@ func (s *PaxosServer) applyLog() {
 
 
 // improvement 3: batching 
-// New Client Entry Point (Async Submission)
+// new client entry point
 func (s *PaxosServer) SubmitRequest(val []byte) error {
 if s.IsLeader() {
         // push to local batching 
@@ -568,7 +724,7 @@ if s.IsLeader() {
 
     //  forward to leader 
 	var leaderID int32 = -1
-    for i := 0; i < 10; i++ { // Try for 5 seconds total
+    for i := 0; i < 10; i++ { 
         leaderID = s.Election.GetLeaderID()
         if leaderID != -1 {
             break
@@ -589,7 +745,7 @@ if s.IsLeader() {
     ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
     defer cancel()
 
-    // Follower forwards to leader's gRPC endpoint 
+    // follower forwards to leader gRPC endpoint 
     _, err := leaderClient.ForwardPropose(ctx, &pb.ProposeRequest{
         Value:    val,
         SenderId: s.ID,
@@ -601,7 +757,7 @@ if s.IsLeader() {
     return err
 }
 
-// Background Processor
+// background processor
 func (s *PaxosServer) processBatches() {
 	var batch [][]byte
 	timer := time.NewTicker(s.batchTimeout)
@@ -610,10 +766,10 @@ func (s *PaxosServer) processBatches() {
 	for {
 		select {
 		case req := <-s.requestChan:
-			// Add to current batch
+			// add to current batch
 			batch = append(batch, req)
 			
-			// If we hit 100 items, flush
+			// flush after 100 items
 			if len(batch) >= s.batchSize {
 				s.flushBatch(batch)
 				batch = nil 
@@ -631,7 +787,7 @@ func (s *PaxosServer) processBatches() {
 	}
 }
 
-// Helper to encode and Propose
+// helper to encode and Propose
 func (s *PaxosServer) flushBatch(batch [][]byte) {
 	if len(batch) == 0 {
 		return
@@ -639,7 +795,7 @@ func (s *PaxosServer) flushBatch(batch [][]byte) {
 
 	log.Printf("[Batching] Flushing batch of %d requests", len(batch))
 
-	// Combine batch into single byte slice using "|" delimiter
+	// combine batch using "|" 
 	separator := []byte("|")
 	combinedValue := bytes.Join(batch, separator)
 
@@ -667,23 +823,22 @@ func (s *PaxosServer) InitForTest(bufferSize int, batchSize int, timeout time.Du
     s.applyCond = sync.NewCond(&s.Mu)
     s.LastApplied = -1
     
-    // Log the adaptive quorum logic being used for this cluster size
-    // This helps verify your Stage 1, 2, or 3 implementation in logs
-    log.Printf(" [QUORUM CHECK] Cluster Size: %d | Using Logic: %s | Matrix: %dx%d", 
+    // log the adaptive quorum logic being used for this cluster size
+    log.Printf(" [QUORUM CHECK] cluster Size: %d,  using Logic: %s, matrix: %dx%d", 
         s.MultiInstance.NumServers, 
         s.MultiInstance.GetQuorumType(),
         s.MultiInstance.Rows,
         s.MultiInstance.Cols)
 
-    // Start background processor
+    // start background processor
     go s.processBatches()
 }
 
 //state machine fucntions
-//make sure state machine is up to date with leader
+//make sure state machine is updateed with leader
 func (s *PaxosServer) WaitUntilSynced() error {
     if s.IsLeader() {
-        return nil // leader is always up to date
+        return nil
     }
 
     leaderID := s.Election.GetLeaderID()
@@ -700,7 +855,7 @@ func (s *PaxosServer) WaitUntilSynced() error {
 
     s.Mu.Lock()
     defer s.Mu.Unlock()
-    // wait  applyLog to reach the leader's index
+    // wait applyLog to reach the leader's index
     for s.LastApplied < resp.LeaderCommitIndex {
         s.applyCond.Wait()
     }
@@ -720,11 +875,19 @@ func (s *PaxosServer) GetServerStatus(ctx context.Context, req *pb.Empty) (*pb.S
 }
 
 func (s *PaxosServer) GetMinApplied() int32 {
+    s.Mu.Lock()
     min := s.LastApplied
+	currentPeers := make([]pb.PaxosClient, 0, len(s.Peers))
+    for _, p := range s.Peers {
+        currentPeers = append(currentPeers, p)
+    }
+    s.Mu.Unlock()
     
-    for _, peer := range s.Peers {
-        // Call a small gRPC method to get the follower's LastApplied
-        resp, err := peer.GetServerStatus(context.Background(), &pb.Empty{})
+    for _, peer := range currentPeers {
+        // call a small gRPC method to get the follower's LastApplied
+        ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		resp, err := peer.GetServerStatus(ctx, &pb.Empty{})
+		cancel()
         if err == nil {
             if resp.AppliedIndex < min {
                 min = resp.AppliedIndex
@@ -761,6 +924,7 @@ func (s *PaxosServer) ForwardPropose(ctx context.Context, req *pb.ProposeRequest
     }
 
 	respChan := make(chan string, 1)
+	
     s.AuctionSM.Mu.Lock()
     s.AuctionSM.Responses[cmd.Timestamp] = respChan
     s.AuctionSM.Mu.Unlock()
@@ -779,7 +943,89 @@ func (s *PaxosServer) ForwardPropose(ctx context.Context, req *pb.ProposeRequest
     select {
     case <-respChan:
         return &pb.ProposeResponse{Success: true}, nil
-    case <-time.After(15 * time.Second):
-        return nil, fmt.Errorf("Timeout")
+    case <-time.After(30 * time.Second):
+        return nil, fmt.Errorf("forward Timeout")
     }
+}
+
+func (s *PaxosServer) InstallSnapshot(ctx context.Context, req *pb.InstallSnapshotRequest) (*pb.InstallSnapshotResponse, error) {
+    s.Mu.Lock()
+    defer s.Mu.Unlock()
+
+	log.Printf("[Server %d] gets snapshot from leader %d , last index: %d", s.ID, req.SenderId, req.LastIncludedIndex)
+    // check if the snapshot newer 
+    if req.LastIncludedIndex <= s.LastApplied {
+        return &pb.InstallSnapshotResponse{Success: true}, nil
+    }
+
+    // write the snapshot to disk
+    err := os.WriteFile(s.SnapshotPath, req.Data, 0644)
+    if err != nil {
+        log.Printf("[Error] failed to write snapshot file: %v", err)
+        return &pb.InstallSnapshotResponse{Success: false}, err
+    }
+
+    // reload the state machine
+    err = s.AuctionSM.LoadSnapshot(s.SnapshotPath)
+    if err != nil {
+        log.Printf("[Error] failed to load snapshot into SM: %v", err)
+        return &pb.InstallSnapshotResponse{Success: false}, err
+    }
+
+    // update Paxos - log index forward
+    s.LastApplied = int32(s.AuctionSM.LastAppliedIdx)
+    s.MultiInstance.NextIndex = s.LastApplied + 1
+
+    // clean old logs
+    for idx := range s.MultiInstance.Instances {
+        if int32(idx) <= s.LastApplied {
+            delete(s.MultiInstance.Instances, idx)
+        }
+    }
+
+    log.Printf("[Server %d] snapshot installed successfully. New Index %d", s.ID, s.LastApplied)
+    
+    return &pb.InstallSnapshotResponse{Success: true}, nil
+}
+
+
+// membership
+func (s *PaxosServer) MembershipChange(id int32, addr string, isJoin bool) {
+	if isJoin {
+		// dial outside the lock to prevent global deadlock 
+		conn, err := grpc.Dial(addr, grpc.WithInsecure())
+		if err != nil {
+			log.Printf("[Membership] failed to dial peer %d: %v", id, err)
+			return
+		}
+		client := pb.NewPaxosClient(conn)
+
+		s.Mu.Lock()
+		s.Peers[id] = client
+		
+		// update dynamic cluster size and grid parameters
+		n := len(s.Peers) + 1
+		s.MultiInstance.NumServers = n
+		s.MultiInstance.Rows = int(math.Sqrt(float64(n)))
+		if s.MultiInstance.Rows == 0 { s.MultiInstance.Rows = 1 }
+		s.MultiInstance.Cols = n / s.MultiInstance.Rows
+		s.Mu.Unlock()
+		
+		log.Printf("[Server %d] peer %d joined. grid updated to %dx%d", 
+			s.ID, id, s.MultiInstance.Rows, s.MultiInstance.Cols)
+	} else {
+		s.Mu.Lock()
+		delete(s.Peers, id)
+
+		// recalculate grid after node leaves
+		n := len(s.Peers) + 1
+		s.MultiInstance.NumServers = n
+		s.MultiInstance.Rows = int(math.Sqrt(float64(n)))
+		if s.MultiInstance.Rows == 0 { s.MultiInstance.Rows = 1 }
+		s.MultiInstance.Cols = n / s.MultiInstance.Rows
+		s.Mu.Unlock()
+
+		log.Printf("[Server %d] peer %d removed. grid updated to %dx%d", 
+			s.ID, id, s.MultiInstance.Rows, s.MultiInstance.Cols)
+	}
 }

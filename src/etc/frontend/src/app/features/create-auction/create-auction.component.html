@@ -1,0 +1,24 @@
+<div class="create-container">
+  <h2>Create New Auction</h2>
+
+  <div class="form-group">
+    <label>Item Name:</label>
+    <input [(ngModel)]="auction.title" placeholder="e.g. Vintage Camera" />
+  </div>
+
+  <div class="form-group">
+    <label>Creator ID:</label>
+    <input [(ngModel)]="auction.creatorID" type="number" placeholder="Enter your ID" />
+  </div>
+
+  <div class="form-group">
+    <label>Starting Price:</label>
+    <input [(ngModel)]="auction.startingPrice" type="number" placeholder="0.00" />
+  </div>
+
+  <button (click)="submitForm()" [disabled]="!auction.title">
+    Create Auction
+  </button>
+
+  <p *ngIf="successMessage" class="success">{{ successMessage }}</p>
+</div>

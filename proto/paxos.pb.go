@@ -413,6 +413,8 @@ type GetLogResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NextIndex     int32                  `protobuf:"varint,1,opt,name=next_index,json=nextIndex,proto3" json:"next_index,omitempty"`
 	LogEntries    []*LogEntry            `protobuf:"bytes,2,rep,name=log_entries,json=logEntries,proto3" json:"log_entries,omitempty"`
+	Snapshot      []byte                 `protobuf:"bytes,3,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
+	SnapshotIndex int32                  `protobuf:"varint,4,opt,name=snapshot_index,json=snapshotIndex,proto3" json:"snapshot_index,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -459,6 +461,20 @@ func (x *GetLogResponse) GetLogEntries() []*LogEntry {
 		return x.LogEntries
 	}
 	return nil
+}
+
+func (x *GetLogResponse) GetSnapshot() []byte {
+	if x != nil {
+		return x.Snapshot
+	}
+	return nil
+}
+
+func (x *GetLogResponse) GetSnapshotIndex() int32 {
+	if x != nil {
+		return x.SnapshotIndex
+	}
+	return 0
 }
 
 type LogEntry struct {
@@ -777,6 +793,126 @@ func (x *ProposeResponse) GetSuccess() bool {
 	return false
 }
 
+type InstallSnapshotRequest struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	SenderId          int32                  `protobuf:"varint,1,opt,name=sender_id,json=senderId,proto3" json:"sender_id,omitempty"`
+	Term              int32                  `protobuf:"varint,2,opt,name=term,proto3" json:"term,omitempty"`
+	LastIncludedIndex int32                  `protobuf:"varint,3,opt,name=last_included_index,json=lastIncludedIndex,proto3" json:"last_included_index,omitempty"`
+	Data              []byte                 `protobuf:"bytes,4,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *InstallSnapshotRequest) Reset() {
+	*x = InstallSnapshotRequest{}
+	mi := &file_proto_paxos_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstallSnapshotRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstallSnapshotRequest) ProtoMessage() {}
+
+func (x *InstallSnapshotRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_paxos_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstallSnapshotRequest.ProtoReflect.Descriptor instead.
+func (*InstallSnapshotRequest) Descriptor() ([]byte, []int) {
+	return file_proto_paxos_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *InstallSnapshotRequest) GetSenderId() int32 {
+	if x != nil {
+		return x.SenderId
+	}
+	return 0
+}
+
+func (x *InstallSnapshotRequest) GetTerm() int32 {
+	if x != nil {
+		return x.Term
+	}
+	return 0
+}
+
+func (x *InstallSnapshotRequest) GetLastIncludedIndex() int32 {
+	if x != nil {
+		return x.LastIncludedIndex
+	}
+	return 0
+}
+
+func (x *InstallSnapshotRequest) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+type InstallSnapshotResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Term          int32                  `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
+	Success       bool                   `protobuf:"varint,2,opt,name=success,proto3" json:"success,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InstallSnapshotResponse) Reset() {
+	*x = InstallSnapshotResponse{}
+	mi := &file_proto_paxos_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstallSnapshotResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstallSnapshotResponse) ProtoMessage() {}
+
+func (x *InstallSnapshotResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_paxos_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstallSnapshotResponse.ProtoReflect.Descriptor instead.
+func (*InstallSnapshotResponse) Descriptor() ([]byte, []int) {
+	return file_proto_paxos_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *InstallSnapshotResponse) GetTerm() int32 {
+	if x != nil {
+		return x.Term
+	}
+	return 0
+}
+
+func (x *InstallSnapshotResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
 var File_proto_paxos_proto protoreflect.FileDescriptor
 
 const file_proto_paxos_proto_rawDesc = "" +
@@ -812,12 +948,14 @@ const file_proto_paxos_proto_rawDesc = "" +
 	"\x0eCommitResponse\x12\x16\n" +
 	"\x06commit\x18\x01 \x01(\bR\x06commit\",\n" +
 	"\rGetLogRequest\x12\x1b\n" +
-	"\tsender_id\x18\x01 \x01(\x05R\bsenderId\"a\n" +
+	"\tsender_id\x18\x01 \x01(\x05R\bsenderId\"\xa4\x01\n" +
 	"\x0eGetLogResponse\x12\x1d\n" +
 	"\n" +
 	"next_index\x18\x01 \x01(\x05R\tnextIndex\x120\n" +
 	"\vlog_entries\x18\x02 \x03(\v2\x0f.paxos.LogEntryR\n" +
-	"logEntries\"A\n" +
+	"logEntries\x12\x1a\n" +
+	"\bsnapshot\x18\x03 \x01(\fR\bsnapshot\x12%\n" +
+	"\x0esnapshot_index\x18\x04 \x01(\x05R\rsnapshotIndex\"A\n" +
 	"\bLogEntry\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\x05R\n" +
 	"instanceId\x12\x14\n" +
@@ -833,7 +971,15 @@ const file_proto_paxos_proto_rawDesc = "" +
 	"\x05value\x18\x01 \x01(\fR\x05value\x12\x1b\n" +
 	"\tsender_id\x18\x02 \x01(\x05R\bsenderId\"+\n" +
 	"\x0fProposeResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess2\xa9\x03\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\"\x8d\x01\n" +
+	"\x16InstallSnapshotRequest\x12\x1b\n" +
+	"\tsender_id\x18\x01 \x01(\x05R\bsenderId\x12\x12\n" +
+	"\x04term\x18\x02 \x01(\x05R\x04term\x12.\n" +
+	"\x13last_included_index\x18\x03 \x01(\x05R\x11lastIncludedIndex\x12\x12\n" +
+	"\x04data\x18\x04 \x01(\fR\x04data\"G\n" +
+	"\x17InstallSnapshotResponse\x12\x12\n" +
+	"\x04term\x18\x01 \x01(\x05R\x04term\x12\x18\n" +
+	"\asuccess\x18\x02 \x01(\bR\asuccess2\xfb\x03\n" +
 	"\x05Paxos\x128\n" +
 	"\aPrepare\x12\x15.paxos.PrepareRequest\x1a\x16.paxos.PromiseResponse\x127\n" +
 	"\x06Accept\x12\x14.paxos.AcceptRequest\x1a\x17.paxos.AcceptedResponse\x125\n" +
@@ -841,7 +987,8 @@ const file_proto_paxos_proto_rawDesc = "" +
 	"\vGetLogState\x12\x14.paxos.GetLogRequest\x1a\x15.paxos.GetLogResponse\x12A\n" +
 	"\fGetReadIndex\x12\x17.paxos.ReadIndexRequest\x1a\x18.paxos.ReadIndexResponse\x126\n" +
 	"\x0fGetServerStatus\x12\f.paxos.Empty\x1a\x15.paxos.StatusResponse\x12?\n" +
-	"\x0eForwardPropose\x12\x15.paxos.ProposeRequest\x1a\x16.paxos.ProposeResponseB\x13Z\x11paxos/proto;protob\x06proto3"
+	"\x0eForwardPropose\x12\x15.paxos.ProposeRequest\x1a\x16.paxos.ProposeResponse\x12P\n" +
+	"\x0fInstallSnapshot\x12\x1d.paxos.InstallSnapshotRequest\x1a\x1e.paxos.InstallSnapshotResponseB\x13Z\x11paxos/proto;protob\x06proto3"
 
 var (
 	file_proto_paxos_proto_rawDescOnce sync.Once
@@ -855,23 +1002,25 @@ func file_proto_paxos_proto_rawDescGZIP() []byte {
 	return file_proto_paxos_proto_rawDescData
 }
 
-var file_proto_paxos_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_proto_paxos_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_proto_paxos_proto_goTypes = []any{
-	(*PrepareRequest)(nil),    // 0: paxos.PrepareRequest
-	(*PromiseResponse)(nil),   // 1: paxos.PromiseResponse
-	(*AcceptRequest)(nil),     // 2: paxos.AcceptRequest
-	(*AcceptedResponse)(nil),  // 3: paxos.AcceptedResponse
-	(*CommitRequest)(nil),     // 4: paxos.CommitRequest
-	(*CommitResponse)(nil),    // 5: paxos.CommitResponse
-	(*GetLogRequest)(nil),     // 6: paxos.GetLogRequest
-	(*GetLogResponse)(nil),    // 7: paxos.GetLogResponse
-	(*LogEntry)(nil),          // 8: paxos.LogEntry
-	(*ReadIndexRequest)(nil),  // 9: paxos.ReadIndexRequest
-	(*ReadIndexResponse)(nil), // 10: paxos.ReadIndexResponse
-	(*Empty)(nil),             // 11: paxos.Empty
-	(*StatusResponse)(nil),    // 12: paxos.StatusResponse
-	(*ProposeRequest)(nil),    // 13: paxos.ProposeRequest
-	(*ProposeResponse)(nil),   // 14: paxos.ProposeResponse
+	(*PrepareRequest)(nil),          // 0: paxos.PrepareRequest
+	(*PromiseResponse)(nil),         // 1: paxos.PromiseResponse
+	(*AcceptRequest)(nil),           // 2: paxos.AcceptRequest
+	(*AcceptedResponse)(nil),        // 3: paxos.AcceptedResponse
+	(*CommitRequest)(nil),           // 4: paxos.CommitRequest
+	(*CommitResponse)(nil),          // 5: paxos.CommitResponse
+	(*GetLogRequest)(nil),           // 6: paxos.GetLogRequest
+	(*GetLogResponse)(nil),          // 7: paxos.GetLogResponse
+	(*LogEntry)(nil),                // 8: paxos.LogEntry
+	(*ReadIndexRequest)(nil),        // 9: paxos.ReadIndexRequest
+	(*ReadIndexResponse)(nil),       // 10: paxos.ReadIndexResponse
+	(*Empty)(nil),                   // 11: paxos.Empty
+	(*StatusResponse)(nil),          // 12: paxos.StatusResponse
+	(*ProposeRequest)(nil),          // 13: paxos.ProposeRequest
+	(*ProposeResponse)(nil),         // 14: paxos.ProposeResponse
+	(*InstallSnapshotRequest)(nil),  // 15: paxos.InstallSnapshotRequest
+	(*InstallSnapshotResponse)(nil), // 16: paxos.InstallSnapshotResponse
 }
 var file_proto_paxos_proto_depIdxs = []int32{
 	8,  // 0: paxos.GetLogResponse.log_entries:type_name -> paxos.LogEntry
@@ -882,15 +1031,17 @@ var file_proto_paxos_proto_depIdxs = []int32{
 	9,  // 5: paxos.Paxos.GetReadIndex:input_type -> paxos.ReadIndexRequest
 	11, // 6: paxos.Paxos.GetServerStatus:input_type -> paxos.Empty
 	13, // 7: paxos.Paxos.ForwardPropose:input_type -> paxos.ProposeRequest
-	1,  // 8: paxos.Paxos.Prepare:output_type -> paxos.PromiseResponse
-	3,  // 9: paxos.Paxos.Accept:output_type -> paxos.AcceptedResponse
-	5,  // 10: paxos.Paxos.Commit:output_type -> paxos.CommitResponse
-	7,  // 11: paxos.Paxos.GetLogState:output_type -> paxos.GetLogResponse
-	10, // 12: paxos.Paxos.GetReadIndex:output_type -> paxos.ReadIndexResponse
-	12, // 13: paxos.Paxos.GetServerStatus:output_type -> paxos.StatusResponse
-	14, // 14: paxos.Paxos.ForwardPropose:output_type -> paxos.ProposeResponse
-	8,  // [8:15] is the sub-list for method output_type
-	1,  // [1:8] is the sub-list for method input_type
+	15, // 8: paxos.Paxos.InstallSnapshot:input_type -> paxos.InstallSnapshotRequest
+	1,  // 9: paxos.Paxos.Prepare:output_type -> paxos.PromiseResponse
+	3,  // 10: paxos.Paxos.Accept:output_type -> paxos.AcceptedResponse
+	5,  // 11: paxos.Paxos.Commit:output_type -> paxos.CommitResponse
+	7,  // 12: paxos.Paxos.GetLogState:output_type -> paxos.GetLogResponse
+	10, // 13: paxos.Paxos.GetReadIndex:output_type -> paxos.ReadIndexResponse
+	12, // 14: paxos.Paxos.GetServerStatus:output_type -> paxos.StatusResponse
+	14, // 15: paxos.Paxos.ForwardPropose:output_type -> paxos.ProposeResponse
+	16, // 16: paxos.Paxos.InstallSnapshot:output_type -> paxos.InstallSnapshotResponse
+	9,  // [9:17] is the sub-list for method output_type
+	1,  // [1:9] is the sub-list for method input_type
 	1,  // [1:1] is the sub-list for extension type_name
 	1,  // [1:1] is the sub-list for extension extendee
 	0,  // [0:1] is the sub-list for field type_name
@@ -907,7 +1058,7 @@ func file_proto_paxos_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_paxos_proto_rawDesc), len(file_proto_paxos_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

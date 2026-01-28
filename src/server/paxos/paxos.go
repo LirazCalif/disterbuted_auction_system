@@ -118,16 +118,21 @@ func (m *MultiPaxosInstance) NextInstance() int32 {
 func (m *MultiPaxosInstance) GetInstance(id int32) *PaxosInstance {
     m.Mu.Lock()
     defer m.Mu.Unlock()
-    
-    if _, exists := m.Instances[id]; !exists {
-        m.Instances[id] = &PaxosInstance{
+
+	inst, exists := m.Instances[id]
+    if !exists {
+        inst = &PaxosInstance{
             InstanceID: id,
             Promises:   make(map[int32]bool),
             Accepts:    make(map[int32]bool),
-            NumServers: m.NumServers, // Pass the global config
+            NumServers: m.NumServers,
         }
+        m.Instances[id] = inst
     }
-    return m.Instances[id]
+	if inst.Promises == nil { inst.Promises = make(map[int32]bool) }
+    if inst.Accepts == nil { inst.Accepts = make(map[int32]bool) }
+
+	return inst
 }
 
 
@@ -155,7 +160,7 @@ func (pi *PaxosInstance) HasElectionQuorum(m *MultiPaxosInstance) bool {
 		for c := 0; c < m.Cols; c++ {
 			columnComplete := true
 			for r := 0; r < m.Rows; r++ {
-				serverID := int32(r*m.Cols + c + 1)
+				serverID := int32(r*m.Cols + c)
 				if !pi.Promises[serverID] {
 					columnComplete = false
 					break
@@ -180,7 +185,7 @@ func (pi *PaxosInstance) HasWriteQuorum(m *MultiPaxosInstance) bool {
 		for r := 0; r < m.Rows; r++ {
 			rowComplete := true
 			for c := 0; c < m.Cols; c++ {
-				serverID := int32(r*m.Cols + c + 1)
+				serverID := int32(r*m.Cols + c )
 				if !pi.Accepts[serverID] {
 					rowComplete = false
 					break

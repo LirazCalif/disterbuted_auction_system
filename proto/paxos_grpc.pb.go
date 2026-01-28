@@ -26,6 +26,7 @@ const (
 	Paxos_GetReadIndex_FullMethodName    = "/paxos.Paxos/GetReadIndex"
 	Paxos_GetServerStatus_FullMethodName = "/paxos.Paxos/GetServerStatus"
 	Paxos_ForwardPropose_FullMethodName  = "/paxos.Paxos/ForwardPropose"
+	Paxos_InstallSnapshot_FullMethodName = "/paxos.Paxos/InstallSnapshot"
 )
 
 // PaxosClient is the client API for Paxos service.
@@ -39,6 +40,7 @@ type PaxosClient interface {
 	GetReadIndex(ctx context.Context, in *ReadIndexRequest, opts ...grpc.CallOption) (*ReadIndexResponse, error)
 	GetServerStatus(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*StatusResponse, error)
 	ForwardPropose(ctx context.Context, in *ProposeRequest, opts ...grpc.CallOption) (*ProposeResponse, error)
+	InstallSnapshot(ctx context.Context, in *InstallSnapshotRequest, opts ...grpc.CallOption) (*InstallSnapshotResponse, error)
 }
 
 type paxosClient struct {
@@ -119,6 +121,16 @@ func (c *paxosClient) ForwardPropose(ctx context.Context, in *ProposeRequest, op
 	return out, nil
 }
 
+func (c *paxosClient) InstallSnapshot(ctx context.Context, in *InstallSnapshotRequest, opts ...grpc.CallOption) (*InstallSnapshotResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InstallSnapshotResponse)
+	err := c.cc.Invoke(ctx, Paxos_InstallSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PaxosServer is the server API for Paxos service.
 // All implementations must embed UnimplementedPaxosServer
 // for forward compatibility.
@@ -130,6 +142,7 @@ type PaxosServer interface {
 	GetReadIndex(context.Context, *ReadIndexRequest) (*ReadIndexResponse, error)
 	GetServerStatus(context.Context, *Empty) (*StatusResponse, error)
 	ForwardPropose(context.Context, *ProposeRequest) (*ProposeResponse, error)
+	InstallSnapshot(context.Context, *InstallSnapshotRequest) (*InstallSnapshotResponse, error)
 	mustEmbedUnimplementedPaxosServer()
 }
 
@@ -160,6 +173,9 @@ func (UnimplementedPaxosServer) GetServerStatus(context.Context, *Empty) (*Statu
 }
 func (UnimplementedPaxosServer) ForwardPropose(context.Context, *ProposeRequest) (*ProposeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ForwardPropose not implemented")
+}
+func (UnimplementedPaxosServer) InstallSnapshot(context.Context, *InstallSnapshotRequest) (*InstallSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method InstallSnapshot not implemented")
 }
 func (UnimplementedPaxosServer) mustEmbedUnimplementedPaxosServer() {}
 func (UnimplementedPaxosServer) testEmbeddedByValue()               {}
@@ -308,6 +324,24 @@ func _Paxos_ForwardPropose_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Paxos_InstallSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InstallSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaxosServer).InstallSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Paxos_InstallSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaxosServer).InstallSnapshot(ctx, req.(*InstallSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Paxos_ServiceDesc is the grpc.ServiceDesc for Paxos service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -342,6 +376,10 @@ var Paxos_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ForwardPropose",
 			Handler:    _Paxos_ForwardPropose_Handler,
+		},
+		{
+			MethodName: "InstallSnapshot",
+			Handler:    _Paxos_InstallSnapshot_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
