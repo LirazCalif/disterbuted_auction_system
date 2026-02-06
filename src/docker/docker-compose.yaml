@@ -22,16 +22,38 @@ services:
         test: ["CMD", "etcdctl", "endpoint", "health"]
         interval: 5s
         timeout: 5s
-        retries: 10
+        retries: 3
+  gateway:
+    image: nginx:alpine
+    ports:
+      - "80:80" 
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - paxos-net
+    depends_on:
+      - server0
+      - server1
+      - server2
+      - server3
+      - server4
+      - server5
+      - server6
+      - server7
+      - server8
+      - server9
+      - server10
+      - server11
+       
 
   server0:
     build: { context: ../../, dockerfile: src/docker/Dockerfile }
     command: ["./paxos_server", "--id=0"]
     environment:
       - ETCD_ENDPOINTS=etcd:2379
-    ports: ["8080:8080"]
-    volumes:
-      - ./data/server0:/app/data
+    mem_limit: 512m
+    ports:
+      - "8080:8080"
     networks:
       - paxos-net
     depends_on:
@@ -43,9 +65,9 @@ services:
     command: ["./paxos_server", "--id=1"]
     environment:
       - ETCD_ENDPOINTS=etcd:2379
-    ports: ["8081:8081"]
-    volumes:
-      - ./data/server1:/app/data
+    mem_limit: 512m
+    ports:
+      - "8081:8081"
     networks:
       - paxos-net
     depends_on:
@@ -57,9 +79,9 @@ services:
     command: ["./paxos_server", "--id=2"]
     environment:
       - ETCD_ENDPOINTS=etcd:2379
-    ports: ["8082:8082"]
-    volumes:
-      - ./data/server2:/app/data
+    mem_limit: 512m
+    ports:
+      - "8082:8082"
     networks:
       - paxos-net
     depends_on:
@@ -71,9 +93,9 @@ services:
     command: ["./paxos_server", "--id=3"]
     environment:
       - ETCD_ENDPOINTS=etcd:2379
-    ports: ["8083:8083"]
-    volumes:
-      - ./data/server3:/app/data
+    mem_limit: 512m
+    ports:
+      - "8083:8083"
     networks:
       - paxos-net
     depends_on:
@@ -85,9 +107,9 @@ services:
     command: ["./paxos_server", "--id=4"]
     environment:
       - ETCD_ENDPOINTS=etcd:2379
-    ports: ["8084:8084"]
-    volumes:
-      - ./data/server4:/app/data
+    mem_limit: 512m
+    ports:
+      - "8084:8084"
     networks:
       - paxos-net
     depends_on:
@@ -99,9 +121,9 @@ services:
     command: ["./paxos_server", "--id=5"]
     environment:
       - ETCD_ENDPOINTS=etcd:2379
-    ports: ["8085:8085"]
-    volumes:
-      - ./data/server5:/app/data
+    mem_limit: 512m
+    ports:
+      - "8085:8085"
     networks:
       - paxos-net
     depends_on:
@@ -113,9 +135,9 @@ services:
     command: ["./paxos_server", "--id=6"]
     environment:
       - ETCD_ENDPOINTS=etcd:2379
-    ports: ["8086:8086"]
-    volumes:
-      - ./data/server6:/app/data
+    mem_limit: 512m
+    ports:
+      - "8086:8086"
     networks:
       - paxos-net
     depends_on:
@@ -127,9 +149,9 @@ services:
     command: ["./paxos_server", "--id=7"]
     environment:
       - ETCD_ENDPOINTS=etcd:2379
-    ports: ["8087:8087"]
-    volumes:
-      - ./data/server7:/app/data
+    mem_limit: 512m
+    ports:
+      - "8087:8087"
     networks:
       - paxos-net
     depends_on:
@@ -141,9 +163,9 @@ services:
     command: ["./paxos_server", "--id=8"]
     environment:
       - ETCD_ENDPOINTS=etcd:2379
-    ports: ["8088:8088"]
-    volumes:
-      - ./data/server8:/app/data
+    mem_limit: 512m
+    ports:
+      - "8088:8088"
     networks:
       - paxos-net
     depends_on:
@@ -155,9 +177,9 @@ services:
     command: ["./paxos_server", "--id=9"]
     environment:
       - ETCD_ENDPOINTS=etcd:2379
-    ports: ["8089:8089"]
-    volumes:
-      - ./data/server9:/app/data
+    mem_limit: 512m
+    ports:
+      - "8089:8089"
     networks:
       - paxos-net
     depends_on:
@@ -169,9 +191,9 @@ services:
     command: ["./paxos_server", "--id=10"]
     environment:
       - ETCD_ENDPOINTS=etcd:2379
-    ports: ["8090:8090"]
-    volumes:
-      - ./data/server10:/app/data
+    mem_limit: 512m
+    ports:
+      - "8090:8090"
     networks:
       - paxos-net
     depends_on:
@@ -183,15 +205,15 @@ services:
     command: ["./paxos_server", "--id=11"]
     environment:
       - ETCD_ENDPOINTS=etcd:2379
-    ports: ["8091:8091"]
-    volumes:
-      - ./data/server11:/app/data
+    mem_limit: 512m
+    ports:
+      - "8091:8091"
     networks:
       - paxos-net
     depends_on:
       etcd:
         condition: service_healthy
-  
+
 networks:
   paxos-net:
     driver: bridge

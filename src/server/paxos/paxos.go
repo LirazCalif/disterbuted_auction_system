@@ -24,7 +24,7 @@ type PaxosInstance struct {
 
 }
 
-// Prepare_Instance: checks if proposalID can be promised.
+// checks if proposalID can be promised.
 func (pi *PaxosInstance) Prepare_Instance(proposalID int64) *pb.PromiseResponse {
 	if proposalID >= pi.MaxPromisedID {
 		pi.MaxPromisedID = proposalID
@@ -39,7 +39,7 @@ func (pi *PaxosInstance) Prepare_Instance(proposalID int64) *pb.PromiseResponse 
 	}
 }
 
-// Accept_Instance: checks if proposalID can be accepted and updates state.
+//  checks if proposalID can be accepted and updates state.
 func (pi *PaxosInstance) Accept_Instance(proposalID int64, value []byte) *pb.AcceptedResponse {
 	if proposalID >= pi.MaxPromisedID {
 		pi.MaxPromisedID = proposalID
@@ -87,7 +87,7 @@ type MultiPaxosInstance struct {
 func NewMultiPaxosInstance(numServers int) *MultiPaxosInstance {
     rows := int(math.Sqrt(float64(numServers)))
 	if rows == 0 { rows = 1 }
-	cols := numServers / rows
+	cols := int(math.Ceil(float64(numServers) / float64(rows)))
     
     return &MultiPaxosInstance{
         Instances: make(map[int32]*PaxosInstance),
@@ -136,7 +136,6 @@ func (m *MultiPaxosInstance) GetInstance(id int32) *PaxosInstance {
 }
 
 
-//quorum extention
 // GetQuorumType determines which logic to apply
 func (m *MultiPaxosInstance) GetQuorumType() string {
 	if m.NumServers <= 5 {
@@ -161,6 +160,9 @@ func (pi *PaxosInstance) HasElectionQuorum(m *MultiPaxosInstance) bool {
 			columnComplete := true
 			for r := 0; r < m.Rows; r++ {
 				serverID := int32(r*m.Cols + c)
+				if serverID >= int32(m.NumServers) {
+                    continue 
+                }
 				if !pi.Promises[serverID] {
 					columnComplete = false
 					break
@@ -180,12 +182,15 @@ func (pi *PaxosInstance) HasWriteQuorum(m *MultiPaxosInstance) bool {
 	case "MAJORITY":
 		return count > m.NumServers/2 
 	case "ASYMMETRIC":
-		return count >= 3 
+		return count >= 3
 	case "GRID":		
 		for r := 0; r < m.Rows; r++ {
 			rowComplete := true
 			for c := 0; c < m.Cols; c++ {
 				serverID := int32(r*m.Cols + c )
+				if serverID >= int32(m.NumServers) {
+                    continue 
+                }
 				if !pi.Accepts[serverID] {
 					rowComplete = false
 					break

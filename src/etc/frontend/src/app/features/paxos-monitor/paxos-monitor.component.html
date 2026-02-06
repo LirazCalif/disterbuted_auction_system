@@ -1,0 +1,57 @@
+<div class="monitor-container">
+  <div class="node-grid">
+    <div *ngFor="let node of nodeStates" 
+         class="node-card" 
+         [class.online]="node.status === 'ONLINE'"
+         [class.leader]="node.isLeader">
+      <div class="node-id">Server_{{ node.id.toString().padStart(2, '0') }}</div>
+      <div class="node-info">
+        
+        <span>Idx: {{ node.appliedIndex === -1 ? '---' : node.appliedIndex }}</span>
+        <span class="role">{{ node.isLeader ? 'LEADER' : 'Follower' }}</span>
+      </div>
+      <div class="status-dot"></div>
+    </div>
+  </div>
+
+  <div class="monitor-header">
+    <div class="title-group">
+      <span class="title">Paxos Control Center</span>
+    </div>
+    <div class="header-actions">
+      <button class="clear-btn" (click)="clearLogs()">Clear</button>
+    </div>
+  </div>
+
+  <div class="filters">
+    <button (click)="applyFilter('ALL')" [class.active]="currentFilter === 'ALL'">All</button>
+    
+    <button (click)="applyFilter('CONSENSUS')" [class.active]="currentFilter === 'CONSENSUS'" class="tag-consensus">Consensus</button>
+    <button (click)="applyFilter('QUORUM')" [class.active]="currentFilter === 'QUORUM'" class="tag-quorum">Quorum</button>
+    
+    <button (click)="applyFilter('LEADER')" [class.active]="currentFilter === 'LEADER'" class="tag-leader">Elections</button>
+    <button (click)="applyFilter('NODE')" [class.active]="currentFilter === 'NODE'" class="tag-node">Nodes</button>
+    
+    <button (click)="applyFilter('REQUEST')" [class.active]="currentFilter === 'REQUEST'" class="tag-request">Traffic</button>
+    <button (click)="applyFilter('SYSTEM')" [class.active]="currentFilter === 'SYSTEM'">System</button>
+  </div>
+
+  <div class="log-viewport">
+    <div *ngFor="let log of filteredLogs" class="log-entry" [ngClass]="log.type">
+      <span class="timestamp">{{ log.time }}</span>
+      <span class="source-tag" *ngIf="log.sourceServer !== undefined">
+        SVR_{{ log.sourceServer.toString().padStart(2, '0') }}
+      </span>
+      <span class="tag">[{{ log.type }}]</span>
+      <div class="message-content">
+        <span class="message-text">{{ log.message }}</span>
+        <span *ngIf="log.type === 'CONSENSUS' || log.message.toLowerCase().includes('batch')" class="batch-pill">BATCH</span>
+        <span *ngIf="log.type === 'QUORUM'" class="quorum-indicator">QUORUM</span>
+      </div>
+    </div>
+    <div *ngIf="filteredLogs.length === 0" class="empty-msg">
+      <p>System not resposive</p>
+      <small>Getting streams from ports</small>
+    </div>
+  </div>
+</div>

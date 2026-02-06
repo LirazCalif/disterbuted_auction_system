@@ -9,22 +9,29 @@ import (
 )
 
 type AuctionItem struct {
+
 	ItemName   string  `json:"item_name"`
 	ItemID     int32   `json:"item_id"`
 	HighestBid float64 `json:"highest_bid"`
-	WinnerID   int32   `json:"winner_id"`
+	
+    WinnerID   int32   `json:"winner_id"`
 	CreatorID  int32   `json:"creator_id"`
 	IsOpen     bool    `json:"is_open"`
 }
 
+
+
+
 type Command struct {
 	Type      CommandType `json:"type"`
 	ItemName  string      `json:"item_name"`
-	ItemID    int32       `json:"item_id"`
+	
+    ItemID    int32       `json:"item_id"`
 	UserID    int32       `json:"user_id"`
 	Amount    float64     `json:"amount"`
 	Timestamp int64       `json:"timestamp"`
 }
+
 
 type CommandType string
 const (
@@ -36,8 +43,11 @@ const (
 
 )
 
+
+
 type AuctionStateMachine struct {
     Items map[int32]*AuctionItem
+    Users          map[int32]bool
     Mu    sync.Mutex
 
 	Responses map[int64]chan string
@@ -46,59 +56,66 @@ type AuctionStateMachine struct {
     NextUserID int32
 }
 
+
 func NewAuctionStateMachine() *AuctionStateMachine {
     return &AuctionStateMachine{
         Items: make(map[int32]*AuctionItem),
-		Responses: make(map[int64]chan string),
+        Users:      make(map[int32]bool),
+		
+        Responses: make(map[int64]chan string),
         NextItemID: 1,
         NextUserID: 1,
     }
 }
 
-// Process a list of commands in the exact same order
-func (s *AuctionStateMachine) ApplyBatch(commands []Command, logIdx0 int64) []string {
+// process a list of commands in the exact same order
+func (state *AuctionStateMachine) ApplyBatch(commands []Command, logIdx0 int64) []string {
+    
     results := make([]string, len(commands))
+
     for i, cmd := range commands {
 		currentIdx:= logIdx0 + int64(i)
-        results[i] = s.Apply(cmd,currentIdx) 
+        results[i] = state.Apply(cmd,currentIdx) 
     }
+
     return results
 }
 
 //handles the execution of commands from the replicated log.
-func (s *AuctionStateMachine) Apply(cmd Command, logIdx int64) string {
-	s.Mu.Lock()
-    defer s.Mu.Unlock()
-    s.ensuremaps()
+func (state *AuctionStateMachine) Apply(cmd Command, logIdx int64) string {
+	state.Mu.Lock()
+    defer state.Mu.Unlock()
+    state.ensuremaps()
 
     var result string
 
 	switch cmd.Type {
+    
     case RegisterUser:
-        result = s.handleRegister(cmd)
+        result = state.handleRegister(cmd)
     case CreateAuction:
-        result = s.handleCreate(cmd)
+        result = state.handleCreate(cmd)
     case PlaceBid:
-        result = s.handleBid(cmd)
+        result = state.handleBid(cmd)
     case CloseAuction:
-        result = s.handleClose(cmd)
+        result = state.handleClose(cmd)
     case DeleteAuction:
-        result = s.handleDelete(cmd)
+        result = state.handleDelete(cmd)
+    
     default:
         result = "Error: Unknown command"
     }
-	//Checks if an HTTP handler waiting for the result
 
 
-	s.LastAppliedIdx = logIdx
+	state.LastAppliedIdx = logIdx
 
-    if ch, ok := s.Responses[cmd.Timestamp]; ok {
+    if ch, ok := state.Responses[cmd.Timestamp]; ok {
         select {
 		case ch <- result:
 		default:
 			log.Printf("Warning: handler for timestamp %d not listening", cmd.Timestamp)
 		}
-		delete(s.Responses, cmd.Timestamp) 
+		delete(state.Responses, cmd.Timestamp) 
     }
 
     return result
@@ -108,129 +125,141 @@ func (s *AuctionStateMachine) Apply(cmd Command, logIdx int64) string {
 
 
 //add item to state machine
-func (s *AuctionStateMachine) handleCreate(cmd Command) string {
+func (state *AuctionStateMachine) handleCreate(cmd Command) string {
 
-	if err := s.validateStates(cmd); err != "" {
+	if err := state.validateStates(cmd); err != "" {
+        log.Printf("[SM Error] Validation failed for %s: %s", cmd.ItemName, err)
 		return err
 	}
 
-    id := s.NextItemID
-	s.NextItemID++
+    id := state.NextItemID
+	state.NextItemID++
 
-    s.Items[id] = &AuctionItem{
+    state.Items[id] = &AuctionItem{
         ItemName:          cmd.ItemName,
         ItemID:            id,
         HighestBid:        cmd.Amount, 
-        WinnerID:          -1,         // No winner
+        WinnerID:          -1,         
         CreatorID:         cmd.UserID,
         IsOpen:            true,
     }
+    log.Printf("[SM SUCCESS] Added Item %d (%s). Total Items: %d", id, cmd.ItemName, len(state.Items))
     return fmt.Sprintf("Success: Auction created with ID: %d", id)
 }
 
 // update the highest bidder logic
-func (s *AuctionStateMachine) handleBid(cmd Command) string {
+func (state *AuctionStateMachine) handleBid(cmd Command) string {
 
-	if err := s.validateStates(cmd); err != "" {
+	if err := state.validateStates(cmd); err != "" {
 		return err
 	}
 
-	item := s.Items[cmd.ItemID]
+	item := state.Items[cmd.ItemID]
     item.HighestBid = cmd.Amount
     item.WinnerID = cmd.UserID
     return "Success: Bid accepted"
 }
 
-// Closes the auction so no more bids can be placed.
-// Only the Creator can close the auction
-func (s *AuctionStateMachine) handleClose(cmd Command) string {
+// Closes the auction 
+func (state *AuctionStateMachine) handleClose(cmd Command) string {
 
-	if err := s.validateStates(cmd); err != "" {
+	if err := state.validateStates(cmd); err != "" {
 		return err
 	}
 
-    s.Items[cmd.ItemID].IsOpen = false
+    state.Items[cmd.ItemID].IsOpen = false
     return "Success: Auction closed"
 }
 
 // Removes the auction
-func (s *AuctionStateMachine) handleDelete(cmd Command) string {
+func (state *AuctionStateMachine) handleDelete(cmd Command) string {
 
-	if err := s.validateStates(cmd); err != "" {
+	if err := state.validateStates(cmd); err != "" {
         return err
     }
 
-    delete(s.Items, cmd.ItemID)
+    delete(state.Items, cmd.ItemID)
     return "Success: Auction deleted"
 }
 
-func (s *AuctionStateMachine) handleRegister(cmd Command) string {
+func (state *AuctionStateMachine) handleRegister(cmd Command) string {
 
-    id := s.NextUserID
-    s.NextUserID++
+    id := state.NextUserID
+    state.NextUserID++
+
+    state.Users[id] = true
 
     return fmt.Sprintf("Success: Registered. Your UserID is: %d", id)
 }
 
 //Validation rules
 
-//is the command's data valid  - stateless checks
-func (c *Command) Basic_Valid() string {
+//is the command's data valid 
+func (command *Command) Basic_Valid() string {
 
-    if c.Type == RegisterUser {
+    if command.Type == RegisterUser {
         return ""
     }
 
-    if c.Type == CreateAuction {
-        if c.UserID <= 0 {
+    if command.Type == CreateAuction {
+        if command.UserID <= 0 {
             return "Rejected: You must be registered to perform this action"
         }
-        if c.ItemName == "" {
+        if command.ItemName == "" {
             return "rejected: Item name cannot be empty"
         }
         return "" 
     }
 
-    if c.ItemID <= 0 {
+    if command.ItemID <= 0 {
         return "Rejected: Invalid item ID"
     }
-    if c.Type == PlaceBid {
-        if c.Amount <= 0 {
+    if command.Type == PlaceBid {
+        if command.Amount <= 0 {
             return "Rejected: Bid amount must be positive"
         }
-        if c.UserID <= 0 {
+        if command.UserID <= 0 {
             return "Rejected: You must be registered to perform this action"
         }
     }
     return ""
 }
 
-//validations for different states - stateful checks
-func (s *AuctionStateMachine) validateStates(cmd Command) string {
+//validations for different states
+func (state *AuctionStateMachine) validateStates(cmd Command) string {
     
+    if cmd.Type != RegisterUser {
+        if _, exists := state.Users[cmd.UserID]; !exists {
+            return "Rejected: User ID not recognized by the cluster"
+        }
+    }
+
     if cmd.Type == CreateAuction {
 		return ""
 	}
 
-    item, exists := s.Items[cmd.ItemID]
+    item, exists := state.Items[cmd.ItemID]
 
     switch cmd.Type {
     case PlaceBid:
         if !exists {
             return "Rejected: Item not found"
         }
+
         if !item.IsOpen {
             return "Rejected: Auction closed"
         }
+
         // no self bidding
         if item.CreatorID == cmd.UserID {
-            return "Rejected: Creator cannot bid on their own auction"
+            return "rejected: Creator cannot bid on their own auction"
         }
         // don't outbid yourself
         if item.WinnerID == cmd.UserID {
             return "Rejected: You are already the highest bidder"
         }
-        //  Price Check
+
+        //  price Check
         if cmd.Amount <= item.HighestBid {
             return "Rejected: Bid too low"
         }
@@ -239,7 +268,8 @@ func (s *AuctionStateMachine) validateStates(cmd Command) string {
         if !exists {
             return "Rejected: Item not found"
         }
-        // Rule: Permissions
+
+        //permissions
         if item.CreatorID != cmd.UserID {
             return "Rejected: Unauthorized"
         }
@@ -247,39 +277,39 @@ func (s *AuctionStateMachine) validateStates(cmd Command) string {
     return ""
 }
 
-// validates a command locally before proposing it to Paxos.
-func (s *AuctionStateMachine) PreCheck(cmd Command) (bool, string) {
+// validates a command locally before proposing it to paxos state
+func (state *AuctionStateMachine) PreCheck(cmd Command) (bool, string) {
     
 	if err := cmd.Basic_Valid(); err != "" {
         return false, err
     }
 
-	s.Mu.Lock()
-    s.ensuremaps()
-    defer s.Mu.Unlock()
+	state.Mu.Lock()
+    state.ensuremaps()
+    defer state.Mu.Unlock()
 
-    if cmd.Type == RegisterUser || cmd.Type == CreateAuction {
+    if cmd.Type == RegisterUser {
         return true, ""
     }
 
-    if err := s.validateStates(cmd); err != "" {
+    if err := state.validateStates(cmd); err != "" {
         return false, err
     }
 
-    return true, "" // Success
+    return true, "" // success
 }
 
 
 //Read Functions
 
-// Returns all items matching a name.
-func (s *AuctionStateMachine) FindItemByName(name string) []*AuctionItem {
-	s.Mu.Lock()
-    s.ensuremaps()
+// Returns all items matching a name
+func (state *AuctionStateMachine) FindItemByName(name string) []*AuctionItem {
+	state.Mu.Lock()
+    state.ensuremaps()
 
-	defer s.Mu.Unlock()
+	defer state.Mu.Unlock()
 	var results []*AuctionItem
-	for _, item := range s.Items {
+	for _, item := range state.Items {
 		if item.ItemName == name {
 			results = append(results, item)
 		}
@@ -287,12 +317,12 @@ func (s *AuctionStateMachine) FindItemByName(name string) []*AuctionItem {
 	return results
 }
 
-// Returns all items matching an id.
-func (s *AuctionStateMachine) FindItemByID(ID int32) (*AuctionItem, bool) {
-    s.Mu.Lock()
-    s.ensuremaps()
-    defer s.Mu.Unlock()
-    item, exists := s.Items[ID]
+// Returns all items matching an id
+func (state *AuctionStateMachine) FindItemByID(ID int32) (*AuctionItem, bool) {
+    state.Mu.Lock()
+    state.ensuremaps()
+    defer state.Mu.Unlock()
+    item, exists := state.Items[ID]
 	if !exists {
         return nil, false
     }
@@ -302,12 +332,15 @@ func (s *AuctionStateMachine) FindItemByID(ID int32) (*AuctionItem, bool) {
 }
 
 //a list of all current auctions
-func (s *AuctionStateMachine) GetAllItems() []*AuctionItem {
-    s.Mu.Lock()
-    s.ensuremaps()
-    defer s.Mu.Unlock()
+func (state *AuctionStateMachine) GetAllItems() []*AuctionItem {
+    state.Mu.Lock()
+    state.ensuremaps()
+
+    defer state.Mu.Unlock()
+
     var results []*AuctionItem
-    for _, item := range s.Items {
+
+    for _, item := range state.Items {
         results = append(results, item)
     }
     return results
@@ -315,19 +348,19 @@ func (s *AuctionStateMachine) GetAllItems() []*AuctionItem {
 
 
 //Serializetion
-// Serialize: Turn Command into bytes to send via Paxos/gRPC
-func (c *Command) Serialize() ([]byte, error) {
-    return json.Marshal(c)
+//  Turn Command into bytes to send via Paxos gRPC
+func (command *Command) Serialize() ([]byte, error) {
+    return json.Marshal(command)
 }
 
-// Deserialize: Turn bytes from Paxos Log back into a Command
+// Turn bytes from Paxos Log back into a command
 func DeserializeCommand(data []byte) (Command, error) {
     var cmd Command
     err := json.Unmarshal(data, &cmd)
     return cmd, err
 }
 
-// DeserializeBatch parses a byte slice containing multiple commands.
+// DeserializeBatch parses a byte slice containing multiple command state
 func DeserializeBatch(data []byte) ([]Command, error) {
 	if len(data) == 0 {
         return []Command{}, nil
@@ -343,60 +376,106 @@ func DeserializeBatch(data []byte) ([]Command, error) {
     return commands, err
 }
 
+//snapshot struct
 type SnapshotData struct {
     Items      map[int32]*AuctionItem `json:"items"`
+    Users      map[int32]bool         `json:"users"`
     NextID     int32                  `json:"next_id"`
-    NextUserID int32 `json:"next_user_id"`
+    NextUserID int32                  `json:"next_user_id"`
+    LastIndex  int32                  `json:"last_index"`
+
 }
 
-func (s *AuctionStateMachine) SaveSnapshot(filePath string) error {
-    s.Mu.Lock()
-    s.ensuremaps()
+//save snapshot to memory
+func (state *AuctionStateMachine) SaveSnapshot(filePath string, lastIdx int32) error {
+    state.Mu.Lock()
+    state.ensuremaps()
+    //build snapshot
     datastruct := SnapshotData{
-        Items:  s.Items,
-        NextID: s.NextItemID,
-        NextUserID: s.NextUserID,
+        Items:  state.Items,
+        Users:      state.Users,
+
+        NextID: state.NextItemID,
+        NextUserID: state.NextUserID,
+
+        LastIndex:  lastIdx,
     }
+
+    //marshel state to json
     data, err := json.Marshal(datastruct)
-    s.Mu.Unlock()
+    state.Mu.Unlock()
 
     if err != nil { return err }
 
+    //temporary write 
     tempPath := filePath + ".tmp"
     if err := os.WriteFile(tempPath, data, 0644); err != nil {
         return err
     }
+    //atomic replace
     return os.Rename(tempPath, filePath)
 }
 
-func (s *AuctionStateMachine) LoadSnapshot(filePath string) error {
+func (state *AuctionStateMachine) LoadSnapshot(filePath string) (int32, error) {
+    // read data from storage
     data, err := os.ReadFile(filePath)
-    if err != nil { return err } 
-    s.Mu.Lock()
-    defer s.Mu.Unlock()
+    
+    if err != nil { 
+        return 0, err 
+    } 
+
+    // lock 
+    state.Mu.Lock()
+    defer state.Mu.Unlock()
 
     var datastruct SnapshotData
     if err := json.Unmarshal(data, &datastruct); err != nil {
-        return err
+        return 0, err
     }
 
-    s.Items = datastruct.Items
+    //restore data from memory
+    state.Items = datastruct.Items
+    state.Users = datastruct.Users
     
-     s.ensuremaps()
+     state.ensuremaps()
 
-    s.NextItemID = datastruct.NextID
-    s.NextUserID = datastruct.NextUserID
-    return nil
+    state.NextItemID = datastruct.NextID
+    state.NextUserID = datastruct.NextUserID
+
+    //return log index
+    return datastruct.LastIndex, nil
 }
 
-func (s *AuctionStateMachine) ensuremaps() {
-	if s.Items == nil {
-		s.Items = make(map[int32]*AuctionItem)
+// safe gaured to avoid nil pointer panics
+func (state *AuctionStateMachine) ensuremaps() {
+	if state.Items == nil {
+		state.Items = make(map[int32]*AuctionItem)
 	}
-	if s.Responses == nil {
-		s.Responses = make(map[int64]chan string)
+    if state.Users == nil {
+        state.Users = make(map[int32]bool) 
+    }
+	if state.Responses == nil {
+		state.Responses = make(map[int64]chan string)
 	}
 }
 
+
+func (state *AuctionStateMachine) GetSnapshotData(filePath string) ([]byte, int32, error) {
+    // read file from disk 
+    data, err := os.ReadFile(filePath)
+    if err != nil {
+        return nil, 0, err
+
+    }
+
+    // decode  to find the index
+    var meta SnapshotData
+
+    if err := json.Unmarshal(data, &meta); err != nil {
+        return nil, 0, err
+    }
+
+    return data, meta.LastIndex, nil
+}
 
 

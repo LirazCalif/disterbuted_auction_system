@@ -1,0 +1,144 @@
+.header-actions
+  background: #f1f4f9
+  padding: 20px
+  border-radius: 8px
+  margin-bottom: 25px
+  display: flex
+  gap: 12px
+  align-items: center
+  flex-wrap: wrap
+
+  h2
+    margin: 0
+    margin-right: 10px
+    color: #2c3e50
+
+  input
+    padding: 8px
+    border: 1px solid #ced4da
+    border-radius: 4px
+    width: 150px
+
+  button
+    padding: 8px 16px
+    border-radius: 4px
+    border: none
+    cursor: pointer
+    font-weight: 500
+    background-color: #34495e
+    color: white
+    transition: background 0.2s
+
+    &:hover
+      background-color: #2c3e50
+
+    // Specific colors for the simplified button names
+    &.revenue-btn
+      background-color: #27ae60 // Green for Verify My Revenue
+      &:hover
+        background-color: #219150
+
+    &.batch-btn
+      background-color: #e67e22 // Orange for Run Batch
+      &:hover
+        background-color: #d35400
+
+    &.refresh-btn
+      background-color: #34495e // Dark blue for Refresh
+      &:hover
+        background-color: #2c3e50
+
+.status-msg
+  text-align: center
+  padding: 20px
+  background: rgba(88, 166, 255, 0.1)
+  color: #58a6ff
+  border-radius: 8px
+  margin-bottom: 20px
+  font-style: italic
+  border: 1px solid rgba(88, 166, 255, 0.2)
+
+.empty-state
+  text-align: center
+  padding: 40px
+  color: #7f8c8d
+  background: #f8f9fa
+  border-radius: 8px
+  border: 2px dashed #ddd
+
+.auction
+  background: white
+  border: 1px solid #ddd
+  border-radius: 8px
+  margin-bottom: 20px
+  padding: 20px
+  transition: transform 0.1s
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05)
+
+  &:hover
+    transform: translateY(-2px)
+
+  .item-header
+    display: flex
+    justify-content: space-between
+    align-items: flex-start
+
+  h3
+    margin-top: 0
+    color: #2980b9
+
+  .sync-badge-btn
+    background-color: #9b59b6
+    font-size: 0.75rem
+    padding: 4px 10px
+    border-radius: 15px
+    color: white
+    border: none
+    cursor: pointer
+
+    &:hover
+      background-color: #8e44ad
+
+  .bid-controls
+    margin-top: 15px
+    background: #f9f9f9
+    padding: 15px
+    border-radius: 4px
+
+    .input-row
+      display: flex
+      align-items: center
+      gap: 10px
+      margin-bottom: 12px
+
+    .button-row
+      display: flex
+      gap: 10px
+
+  input
+    padding: 8px
+    border: 1px solid #ccc
+    border-radius: 4px
+    width: 80px
+
+  button
+    padding: 8px 12px
+    border-radius: 4px
+    border: none
+    cursor: pointer
+    background-color: #3498db
+    color: white
+
+    &:hover
+      opacity: 0.9
+
+    &.close-btn
+      background-color: transparent
+      border: 1px solid #e74c3c
+      color: #e74c3c
+      &:hover
+        background-color: rgba(231, 76, 60, 0.1)
+      
+    &.delete-btn
+      background-color: #c0392b
+      font-weight: bold

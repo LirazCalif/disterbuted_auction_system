@@ -17,7 +17,7 @@ type MembershipManager struct {
 	Etcdclient *clientv3.Client
 	Peers      map[int32]string 
 	Mu         sync.RWMutex
-    Callback   func(id int32, ip string, isJoin bool) // Notify PaxosServer on changes
+    Callback   func(id int32, ip string, isJoin bool) 
 }
 
 func NewMembershipManager(id int32, endpoints []string, cb func(int32, string, bool)) (*MembershipManager, error) {
@@ -36,15 +36,15 @@ func NewMembershipManager(id int32, endpoints []string, cb func(int32, string, b
 	}, nil
 }
 
-func (m *MembershipManager) StartMembership(ctx context.Context, myIP string) {
+func (member *MembershipManager) StartMembership(ctx context.Context, myIP string) {
 	// create a lease
-	leaseGrant, err := m.Etcdclient.Grant(ctx, timeout)
+	leaseGrant, err := member.Etcdclient.Grant(ctx, timeout)
 	if err != nil {
 		log.Fatalf("Failed to create lease: %v", err)
 	}
 
 	// check for heartbeat to renew lease 
-	ch, err := m.Etcdclient.KeepAlive(ctx, leaseGrant.ID)
+	ch, err := member.Etcdclient.KeepAlive(ctx, leaseGrant.ID)
 	if err != nil {
 		log.Fatalf("Failed to start keep alive: %v", err)
 	}
@@ -55,23 +55,23 @@ func (m *MembershipManager) StartMembership(ctx context.Context, myIP string) {
 	}()
 
 	// register self with the lease
-	key := fmt.Sprintf("/nodes/%d", m.ServerID)
-	_, err = m.Etcdclient.Put(ctx, key, myIP, clientv3.WithLease(leaseGrant.ID))
+	key := fmt.Sprintf("/nodes/%d", member.ServerID)
+	_, err = member.Etcdclient.Put(ctx, key, myIP, clientv3.WithLease(leaseGrant.ID))
 	if err != nil {
 		log.Fatalf("failed to register node: %v", err)
 	}
-	log.Printf("[Membership] registered as %d with IP %s", m.ServerID, myIP)
+	log.Printf("[Membership] registered as %d with IP %s", member.ServerID, myIP)
 
 	// watch for changes
-	go m.watchPeers(ctx)
+	go member.watchPeers(ctx)
 }
 
-func (m *MembershipManager) watchPeers(ctx context.Context) {
-	watchChan := m.Etcdclient.Watch(ctx, "/nodes/", clientv3.WithPrefix())
+func (member *MembershipManager) watchPeers(ctx context.Context) {
+	watchChan := member.Etcdclient.Watch(ctx, "/nodes/", clientv3.WithPrefix())
 	
-    resp, _ := m.Etcdclient.Get(ctx, "/nodes/", clientv3.WithPrefix())
+    resp, _ := member.Etcdclient.Get(ctx, "/nodes/", clientv3.WithPrefix())
     for _, kv := range resp.Kvs {
-        m.handleUpdate(string(kv.Key), string(kv.Value), false) // false = add
+        member.handleUpdate(string(kv.Key), string(kv.Value), false)
     }
 
 	for watchResp := range watchChan {
@@ -81,32 +81,32 @@ func (m *MembershipManager) watchPeers(ctx context.Context) {
 			if event.Type == clientv3.EventTypePut {
                 // node joined
 				val := string(event.Kv.Value)
-				m.handleUpdate(key, val, false)
+				member.handleUpdate(key, val, false)
 			} else if event.Type == clientv3.EventTypeDelete {
                 // node failed or left
-				m.handleUpdate(key, "", true) 
+				member.handleUpdate(key, "", true) 
 			}
 		}
 	}
 }
 
-func (m *MembershipManager) handleUpdate(key, val string, isDelete bool) {
+func (member *MembershipManager) handleUpdate(key, val string, isDelete bool) {
 	var id int32
 	fmt.Sscanf(key, "/nodes/%d", &id)
     
     // ignore self
-    if id == m.ServerID { return }
+    if id == member.ServerID { return }
 
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
+	member.Mu.Lock()
+	defer member.Mu.Unlock()
 
 	if isDelete {
-		delete(m.Peers, id)
+		delete(member.Peers, id)
 		log.Printf("[Membership] node %d left or crashed", id)
-        if m.Callback != nil { m.Callback(id, "", false) }
+        if member.Callback != nil { member.Callback(id, "", false) }
 	} else {
-		m.Peers[id] = val
+		member.Peers[id] = val
 		log.Printf("[Membership] node %d joined at %s", id, val)
-        if m.Callback != nil { m.Callback(id, val, true) }
+        if member.Callback != nil { member.Callback(id, val, true) }
 	}
 }

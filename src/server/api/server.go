@@ -7,17 +7,18 @@ import (
 	"time"
 	"fmt"
 	"strings"
-	"bytes"
 	"os"
 	"context"
 	"math"
 
 	pb "paxos/proto"
-	"paxos/src/server/paxos"
-	"paxos/src/server/election"
-	"paxos/src/server/state"
-	"paxos/src/server/storage"
-	"paxos/src/server/membership"
+	"paxos/paxos"
+	"paxos/election"
+	"paxos/state"
+	"paxos/storage"
+	"paxos/membership"
+	"encoding/json"
+	"paxos/logger"
 
 
 	"google.golang.org/grpc"
@@ -53,22 +54,12 @@ type PaxosServer struct {
 	//snapshots
 	SnapshotPath  string
 
-	//wall
+	//wal
 	WAL *storage.WALManager
 
 	//membership
 	Membership *membership.MembershipManager
 
-}
-
-// PaxosMessage is used for internal messaging or non-gRPC transport
-type PaxosMessage struct {
-	Type           string
-	InstanceID     int32
-	ProposalNumber int64
-	Value          []byte
-	SenderID       int32
-	AcceptedValue  []byte
 }
 
 
@@ -89,7 +80,7 @@ func NewPaxosServer(id int32, snapshotPath string, walPath string) *PaxosServer 
 	}
 }
 
-// Prepare: handles a paxos Prepare request - follower side
+// Prepare: handles a paxos Prepare request
 func (s *PaxosServer) Prepare(
 	ctx context.Context,
 	req *pb.PrepareRequest,
@@ -108,11 +99,13 @@ func (s *PaxosServer) Prepare(
 
 	log.Printf("[Server %d] Prepare from %d proposal=%d promised=%v",
 		s.ID, req.SenderId, req.ProposalId, resp.Promised)
+	logger.Emit(fmt.Sprintf("[Server %d] Prepare from %d proposal=%d promised=%v",
+		s.ID, req.SenderId, req.ProposalId, resp.Promised))
 
 	return resp, nil
 }
 
-// Accept: handles a paxos Accept request - follower side
+// Accept: handles a paxos Accept request 
 func (s *PaxosServer) Accept(
 	ctx context.Context,
 	req *pb.AcceptRequest,
@@ -130,6 +123,9 @@ func (s *PaxosServer) Accept(
 
 	log.Printf("[Server %d] Accept from %d proposal=%d accepted=%v",
 		s.ID, req.SenderId, req.ProposalId, resp.Accepted)
+	logger.Emit(fmt.Sprintf("[Server %d] Accept from %d proposal=%d accepted=%v",
+		s.ID, req.SenderId, req.ProposalId, resp.Accepted))
+		
 
 	return resp, nil
 }
@@ -155,15 +151,19 @@ func Start(server *PaxosServer, port string, etcdEndpoints []string) {
 	server.applyCond = sync.NewCond(&server.Mu)
 
 
-	if err := server.AuctionSM.LoadSnapshot(server.SnapshotPath); err == nil {
-		log.Printf("[Server %d] recovery: loaded state from %s", server.ID, server.SnapshotPath)
-		server.LastApplied = int32(server.AuctionSM.LastAppliedIdx)
+	if idx, err := server.AuctionSM.LoadSnapshot(server.SnapshotPath); err == nil {
+		log.Printf("[Server %d] recovery: loaded state from %s (Index %d)", server.ID, server.SnapshotPath, idx)
+		server.LastApplied = idx
+	}
 
-		}
-	
 	//recovery from wall
-	if loadedInstances, err := server.WAL.LoadState(); err == nil && len(loadedInstances) > 0 {
+	loadedInstances, err := server.WAL.LoadState()
+	if err != nil {
+        log.Fatalf("[CRITICAL] Failed to load WAL: %v.", err)
+    }
+	if len(loadedInstances) > 0 {
 		log.Printf("[Server %d] recovery: loaded %d instances from WAL", server.ID, len(loadedInstances))
+		
 		server.MultiInstance.Instances = loadedInstances
 		
 		var maxIdx int32 = -1
@@ -193,6 +193,7 @@ func Start(server *PaxosServer, port string, etcdEndpoints []string) {
 	}()
 
 	log.Printf("paxos server %d started on %s", server.ID, port)
+	logger.Emit(fmt.Sprintf("[NODE] Server %d initialized. Port: %s. Starting election.", server.ID, port))
 
 	go func() {
         // run every 60 seconds to clean up RAM
@@ -207,6 +208,19 @@ func Start(server *PaxosServer, port string, etcdEndpoints []string) {
 
 	log.Printf("[DEBUG] server %d is try to start campaign now", server.ID)
 
+	go func() {
+        // Wait for election to stabilize before starting heartbeats
+        time.Sleep(2 * time.Second) 
+        ticker := time.NewTicker(2 * time.Second)
+        defer ticker.Stop()
+        for range ticker.C {
+            server.Mu.Lock()
+            currentIdx := server.LastApplied 
+            server.Mu.Unlock()
+            
+			logger.EmitNodeStatus(int(server.ID), int64(currentIdx), server.IsLeader())        }
+    }()
+
 	go server.Election.StartCampaign(context.Background())
 
 	go func() {
@@ -215,6 +229,7 @@ func Start(server *PaxosServer, port string, etcdEndpoints []string) {
         time.Sleep(waitDuration)
         server.SyncLog()
     }()
+
 
 	select{}
 
@@ -244,12 +259,13 @@ func (s *PaxosServer) Propose(originalValue []byte) int32 {
 	if !s.IsLeader() {
 		currentLeader := s.Election.GetLeaderID()
 		log.Printf("Server %d is not the leader (Current Leader: %d). Cannot propose.", s.ID, currentLeader)
+		logger.Emit(fmt.Sprintf("[LEADER] Proposal rejected: Server %d is not the leader (Leader is %d)", s.ID, currentLeader))
 		return -1
 	}
 
 	s.Mu.Lock()
 	if s.MultiInstance.NextIndex > s.LastApplied+1 {
-		log.Printf("[Leader %d] Gap detected! Resetting NextIndex from %d to %d", 
+		log.Printf("[Leader %d] Gap detected, resetting NextIndex from %d to %d", 
 			s.ID, s.MultiInstance.NextIndex, s.LastApplied+1)
 		s.MultiInstance.NextIndex = s.LastApplied + 1
 	}
@@ -266,7 +282,7 @@ func (s *PaxosServer) Propose(originalValue []byte) int32 {
 	if canSkipPrepare {
 		proposalID = s.Election.GetCurrentTermProposalID()
 		log.Printf("[Leader %d] skipping Prepare for instance %d using ProposalID %d", s.ID, idx, proposalID)
-		
+		logger.Emit(fmt.Sprintf("[LEADER] Stable Leadership: Skipping Prepare for Instance %d", idx))
 		// implicitly promise ourselves
 		inst.ResetRound()
 		inst.Promises[s.ID] = true 
@@ -351,11 +367,12 @@ func (s *PaxosServer) Propose(originalValue []byte) int32 {
 			s.Election.MarkStable(true)
 
 			log.Printf("[Leader %d] Phase 1 successful. Marked as stable for future instances.", s.ID)
-			
-			// Send Accept
+			logger.Emit(fmt.Sprintf("[QUORUM] Phase 1 Success: Responders %v reached quorum for Instance %d", responders, idx))
+			// send Accept
 			s.sendAccept(idx, proposalID, valueToPropose)
 		} else {
 			log.Printf("[Leader %d] failed to reach Prepare quorum", s.ID)
+			logger.Emit(fmt.Sprintf("[QUORUM] Server %d failed to reach Prepare quorum", s.ID))
 		}
 	}
 
@@ -430,16 +447,16 @@ func (s *PaxosServer)  sendAccept(idx int32, proposalID int64, value []byte) {
 	if reached {
 		inst.Commit(value)
 		log.Printf("[Leader %d] commit value=%s at index=%d", s.ID, string(value), idx)
-
+		logger.Emit(fmt.Sprintf("[QUORUM] Phase 2 Success: Acceptors %v reached quorum for Instance %d", acceptors, idx))
 		s.Mu.Lock()
-        s.applyLog() // leader updates its own KV store immediately
+        s.applyLog() // leader updates its own KV store 
         commitPeers := make(map[int32]pb.PaxosClient)
         for id, p := range s.Peers {
             commitPeers[id] = p
         }
 		s.Mu.Unlock()
 
-		// propagate commit to peers
+		//  commit to peers
 		for peerID, peer := range commitPeers {
 				go func(p pb.PaxosClient, pid int32) {
 					
@@ -456,7 +473,7 @@ func (s *PaxosServer)  sendAccept(idx int32, proposalID int64, value []byte) {
 	}
 }
 
-// Commit: handles a paxos Commit request. follower 
+// handles a paxos Commit request.
 func (s *PaxosServer) Commit(
     ctx context.Context,
     req *pb.CommitRequest,
@@ -484,46 +501,45 @@ func (s *PaxosServer) Commit(
 	s.applyLog()
 
 	log.Printf("[Server %d] Committed value via Leader %d at Instance %d", s.ID, req.SenderId, req.InstanceId)
-    return &pb.CommitResponse{}, nil
+    logger.Emit(fmt.Sprintf("[CONSENSUS] Follower %d committed Instance %d from Leader %d", s.ID, req.InstanceId, req.SenderId))
+	return &pb.CommitResponse{}, nil
 }
 
 
-// recovery function
 
 // returns the current log state to a recovering node
 func (s *PaxosServer) GetLogState(ctx context.Context, req *pb.GetLogRequest) (*pb.GetLogResponse, error) {
+	
+	snapshotBytes, snapshotIdx, err := s.AuctionSM.GetSnapshotData(s.SnapshotPath)
+	if err != nil {
+		snapshotBytes = nil
+		snapshotIdx = 0
+	}
+
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
 
 	var entries []*pb.LogEntry
-	var snapshotBytes []byte
-    var snapshotIdx int32 = 0
 
-	//read snapshots from disk if exist
-	if content, err := os.ReadFile(s.SnapshotPath); err == nil {
-        snapshotBytes = content
-        snapshotIdx = s.LastApplied
-    }
-
-	// Loop through all instances
 	for i := int32(0); i < s.MultiInstance.NextIndex; i++ {
 		inst := s.MultiInstance.GetInstance(i)
-		
-		if inst.IsCommitted { 
+
+		if inst.IsCommitted {
 			entries = append(entries, &pb.LogEntry{
 				InstanceId: i,
-				Value:      inst.CommittedValue, 
+				Value:      inst.CommittedValue,
 			})
 		}
 	}
 
 	return &pb.GetLogResponse{
-		NextIndex:  s.MultiInstance.NextIndex,
-		LogEntries: entries,
+		NextIndex:     s.MultiInstance.NextIndex,
+		LogEntries:    entries,
 		Snapshot:      snapshotBytes,
-        SnapshotIndex: snapshotIdx,
+		SnapshotIndex: snapshotIdx,
 	}, nil
 }
+
 // function asks peers for their logs and updates the local state
 func (s *PaxosServer) SyncLog() {
     log.Println("[SyncLog] starting state transfer from peers")
@@ -573,20 +589,24 @@ func (s *PaxosServer) SyncLog() {
     	_ = os.WriteFile(s.SnapshotPath, bestSnapshot, 0644)
 	}
 
-    // Apply the log to local state
+    // apply the log to local state
     s.Mu.Lock()
 
 	//install snapshots
 	if bestSnapshot != nil && bestSnapshotIdx > s.LastApplied {
+		logger.Emit(fmt.Sprintf("[NODE] Recovered from Peer: Installed Snapshot at Index %d", bestSnapshotIdx))
 		log.Printf("[SyncLog] Installing new snapshot (Index %d)", bestSnapshotIdx)
-    	if err := s.AuctionSM.LoadSnapshot(s.SnapshotPath); err != nil {
-        	log.Printf("can't write snapshot: %v", err)
-			s.LastApplied = bestSnapshotIdx
-        	s.MultiInstance.NextIndex = bestSnapshotIdx + 1
-    	}
+    	
+		if idx, err := s.AuctionSM.LoadSnapshot(s.SnapshotPath); err != nil {
+			log.Printf("[Error] faild to load snapshot: %v", err)
+		} else {
+			log.Printf("[SyncLog] Snapshot loaded successfully. Jumping to index %d", idx)
+			s.LastApplied = idx
+			s.MultiInstance.NextIndex = idx + 1
+		}
 	}
 
-    // Reset local state 
+    // reset local state 
 	for _, entry := range bestLog {
 			inst := s.MultiInstance.GetInstance(entry.InstanceId)
 			if !inst.IsCommitted {
@@ -595,6 +615,7 @@ func (s *PaxosServer) SyncLog() {
 	}
 	
 	s.applyLog()
+	s.syncKVStoreFromSM()
 	s.Mu.Unlock()
 	s.DisposeOldLogs()
 
@@ -602,8 +623,24 @@ func (s *PaxosServer) SyncLog() {
 }
 
 
-// improvement 1: better follower read - reads without full data payload
-// RPC handler - leader answers what the latest committed index is
+func (s *PaxosServer) syncKVStoreFromSM() {
+    s.kvStore = make(map[string]string)
+
+    // clean old kv
+    s.kvStore = make(map[string]string)
+
+	//build again
+	for id, item := range s.AuctionSM.Items {
+        key := fmt.Sprintf("auction:%d", id)
+        s.kvStore[key] = item.ItemName
+    }
+
+	//sync
+    s.applyCond.Broadcast() 
+}
+
+
+// get from leader latest committed index is
 func (s *PaxosServer) GetReadIndex(ctx context.Context, req *pb.ReadIndexRequest) (*pb.ReadIndexResponse, error) {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
@@ -673,16 +710,16 @@ func (s *PaxosServer) applyLog() {
 		}
 
 		s.ApplyToAuction(string(inst.CommittedValue), nextIdx)
+		logger.Emit(fmt.Sprintf("[CONSENSUS] Index %d applied to local State Machine", nextIdx))
 
 		// the committed batch string
 		valStr := string(inst.CommittedValue)
 
-		// split the batch by the delimiter "|"
 		commands := strings.Split(valStr, "|")
 
 		// apply in the batch to the KV Store
 		for _, cmd := range commands {
-			if cmd == "" { continue } //empty - skip
+			if cmd == "" { continue } 
 			
 			parts := strings.SplitN(cmd, "=", 2)
 			if len(parts) == 2 {
@@ -694,7 +731,7 @@ func (s *PaxosServer) applyLog() {
 	}
 
 	go func(idx int32) {
-		err := s.AuctionSM.SaveSnapshot(s.SnapshotPath)
+		err := s.AuctionSM.SaveSnapshot(s.SnapshotPath, idx)
 		if err != nil {
 			log.Printf("[Server %d] Snapshot Error: %v", s.ID, err)
 		} else {
@@ -709,18 +746,17 @@ func (s *PaxosServer) applyLog() {
 
 
 
-// improvement 3: batching 
 // new client entry point
 func (s *PaxosServer) SubmitRequest(val []byte) error {
-if s.IsLeader() {
-        // push to local batching 
-        select {
-        case s.requestChan <- val:
-            return nil
-        default:
-            return fmt.Errorf("server overloaded")
-        }
-    }
+	if s.IsLeader() {
+		logger.Emit(fmt.Sprintf("[REQUEST] Leader received %d bytes for batching", len(val)))		// push to local batching 
+		select {
+			case s.requestChan <- val:
+			return nil
+		default:
+			return fmt.Errorf("server overloaded")
+		}
+	}
 
     //  forward to leader 
 	var leaderID int32 = -1
@@ -752,8 +788,8 @@ if s.IsLeader() {
     })
 	if err != nil {
 		log.Printf("[DEBUG] Forwarding failed to Leader %d: %v", leaderID, err)
-		return err
 	}
+	logger.Emit(fmt.Sprintf("[REQUEST] Follower %d forwarded request to Leader %d", s.ID, leaderID))
     return err
 }
 
@@ -789,30 +825,46 @@ func (s *PaxosServer) processBatches() {
 
 // helper to encode and Propose
 func (s *PaxosServer) flushBatch(batch [][]byte) {
-	if len(batch) == 0 {
-		return
-	}
+    if len(batch) == 0 {
+        return
+    }
+	logger.Emit(fmt.Sprintf("[REQUEST] Batching Engine: Flushing %d accumulated requests to Paxos Instance", len(batch)))
+    log.Printf("[Batching] Flushing batch of %d requests", len(batch))
 
-	log.Printf("[Batching] Flushing batch of %d requests", len(batch))
+    var commands []state.Command
 
-	// combine batch using "|" 
-	separator := []byte("|")
-	combinedValue := bytes.Join(batch, separator)
+    for _, reqBytes := range batch {
+        if len(reqBytes) > 0 && strings.TrimSpace(string(reqBytes))[0] == '[' {
+            if subCmds, err := state.DeserializeBatch(reqBytes); err == nil {
+                commands = append(commands, subCmds...)
+                continue
+            }
+        }
 
-	//pipeline
-	s.pipelineLimit <- struct{}{}
+        if cmd, err := state.DeserializeCommand(reqBytes); err == nil {
+            commands = append(commands, cmd)
+        } else {
+             log.Printf("[Batching] Failed to parse request: %v", err)
+        }
+    }
 
-	//launch Propose
-	go func(val []byte) {
-			// release  when finish
-			defer func() { <-s.pipelineLimit }()
-			
-			s.Propose(val)
-		}(combinedValue)
+    if len(commands) == 0 {
+        return
+    }
 
+    combinedValue, err := json.Marshal(commands)
+    if err != nil {
+        log.Printf("[Batching] marshal error: %v", err)
+        return
+    }
 
+    s.pipelineLimit <- struct{}{}
+
+    go func(val []byte) {
+        defer func() { <-s.pipelineLimit }()
+        s.Propose(val)
+    }(combinedValue)
 }
-
 
 func (s *PaxosServer) InitForTest(bufferSize int, batchSize int, timeout time.Duration) {
     s.requestChan = make(chan []byte, bufferSize)
@@ -852,6 +904,8 @@ func (s *PaxosServer) WaitUntilSynced() error {
     if err != nil {
         return err
     }
+
+	logger.Emit(fmt.Sprintf("[SYSTEM] Linearizable Read requested. Syncing local state to Leader Index %d", resp.LeaderCommitIndex))
 
     s.Mu.Lock()
     defer s.Mu.Unlock()
@@ -898,60 +952,57 @@ func (s *PaxosServer) GetMinApplied() int32 {
 }
 
 func (s *PaxosServer) DisposeOldLogs() {
-    threshold := s.GetMinApplied()
+    minApplied := s.GetMinApplied()
     
     s.Mu.Lock()
     defer s.Mu.Unlock()
-    
+
+	if minApplied > s.LastApplied {
+        minApplied = s.LastApplied
+    }
+
+	var buffer int32 = 50
+	threshold := minApplied - buffer
+	if threshold <= 0 {
+        return 
+    }
+	
+    del_count:=0
 	for idx := range s.MultiInstance.Instances {
         if idx < threshold {
             delete(s.MultiInstance.Instances, idx)
+			del_count++
         }
     }
-    log.Printf("[Server %d] Disposed logs up to index %d", s.ID, threshold)
+	if del_count > 0 {
+		logger.Emit(fmt.Sprintf("[SYSTEM] Log Cleanup: Disposed %d old instances. New threshold: %d", del_count, threshold))
+    	log.Printf("[Server %d] Disposed %d logs", s.ID, del_count)
+	}
 }
 
 
 func (s *PaxosServer) ForwardPropose(ctx context.Context, req *pb.ProposeRequest) (*pb.ProposeResponse, error) {
     if !s.IsLeader() {
-		return &pb.ProposeResponse{Success: false}, fmt.Errorf("not the leader")    }
-		
-    log.Printf("[Leader %d] Received forwarded proposal from Server %d", s.ID, req.SenderId)
+        return &pb.ProposeResponse{Success: false}, fmt.Errorf("not the leader")
+    }
 
-	cmd, err := state.DeserializeCommand(req.Value)
+    log.Printf("[Leader %d] Received forwarded proposal from server %d", s.ID, req.SenderId)
+
+    err := s.SubmitRequest(req.Value)
     if err != nil {
-        return &pb.ProposeResponse{Success: false}, fmt.Errorf("failed to deserialize command")
+		log.Printf("[Leader] SubmitRequest failed: %v", err)
+        return &pb.ProposeResponse{Success: false}, err
     }
 
-	respChan := make(chan string, 1)
-	
-    s.AuctionSM.Mu.Lock()
-    s.AuctionSM.Responses[cmd.Timestamp] = respChan
-    s.AuctionSM.Mu.Unlock()
-
-	defer func() {
-        s.AuctionSM.Mu.Lock()
-        delete(s.AuctionSM.Responses, cmd.Timestamp)
-        s.AuctionSM.Mu.Unlock()
-    }()
-
-	err = s.SubmitRequest(req.Value)
-	if err != nil {
-        return &pb.ProposeResponse{Success: false}, fmt.Errorf("leader queue full")
-    }
-
-    select {
-    case <-respChan:
-        return &pb.ProposeResponse{Success: true}, nil
-    case <-time.After(30 * time.Second):
-        return nil, fmt.Errorf("forward Timeout")
-    }
+    return &pb.ProposeResponse{Success: true}, nil
 }
 
 func (s *PaxosServer) InstallSnapshot(ctx context.Context, req *pb.InstallSnapshotRequest) (*pb.InstallSnapshotResponse, error) {
     s.Mu.Lock()
     defer s.Mu.Unlock()
-
+	
+	logger.Emit(fmt.Sprintf("[NODE] Receiving massive state transfer (Snapshot) from Leader %d up to Index %d", req.SenderId, req.LastIncludedIndex))
+	
 	log.Printf("[Server %d] gets snapshot from leader %d , last index: %d", s.ID, req.SenderId, req.LastIncludedIndex)
     // check if the snapshot newer 
     if req.LastIncludedIndex <= s.LastApplied {
@@ -966,14 +1017,14 @@ func (s *PaxosServer) InstallSnapshot(ctx context.Context, req *pb.InstallSnapsh
     }
 
     // reload the state machine
-    err = s.AuctionSM.LoadSnapshot(s.SnapshotPath)
-    if err != nil {
-        log.Printf("[Error] failed to load snapshot into SM: %v", err)
-        return &pb.InstallSnapshotResponse{Success: false}, err
-    }
+    idx, err := s.AuctionSM.LoadSnapshot(s.SnapshotPath)
+	if err != nil {
+		log.Printf("[Error] failed to load snapshot into SM: %v", err)
+		return &pb.InstallSnapshotResponse{Success: false}, err
+	}
 
     // update Paxos - log index forward
-    s.LastApplied = int32(s.AuctionSM.LastAppliedIdx)
+    s.LastApplied = idx
     s.MultiInstance.NextIndex = s.LastApplied + 1
 
     // clean old logs
@@ -984,7 +1035,7 @@ func (s *PaxosServer) InstallSnapshot(ctx context.Context, req *pb.InstallSnapsh
     }
 
     log.Printf("[Server %d] snapshot installed successfully. New Index %d", s.ID, s.LastApplied)
-    
+    s.syncKVStoreFromSM()
     return &pb.InstallSnapshotResponse{Success: true}, nil
 }
 
@@ -1004,15 +1055,16 @@ func (s *PaxosServer) MembershipChange(id int32, addr string, isJoin bool) {
 		s.Peers[id] = client
 		
 		// update dynamic cluster size and grid parameters
-		n := len(s.Peers) + 1
-		s.MultiInstance.NumServers = n
+		n := float64(len(s.Peers) + 1)
+		s.MultiInstance.NumServers = int(n)
 		s.MultiInstance.Rows = int(math.Sqrt(float64(n)))
 		if s.MultiInstance.Rows == 0 { s.MultiInstance.Rows = 1 }
-		s.MultiInstance.Cols = n / s.MultiInstance.Rows
+		s.MultiInstance.Cols = int(math.Ceil(float64(n) / float64(s.MultiInstance.Rows)))
 		s.Mu.Unlock()
 		
 		log.Printf("[Server %d] peer %d joined. grid updated to %dx%d", 
 			s.ID, id, s.MultiInstance.Rows, s.MultiInstance.Cols)
+		logger.Emit(fmt.Sprintf("[NODE] Server %d JOINED the cluster. New Grid: %dx%d", id, s.MultiInstance.Rows, s.MultiInstance.Cols))
 	} else {
 		s.Mu.Lock()
 		delete(s.Peers, id)
@@ -1022,10 +1074,11 @@ func (s *PaxosServer) MembershipChange(id int32, addr string, isJoin bool) {
 		s.MultiInstance.NumServers = n
 		s.MultiInstance.Rows = int(math.Sqrt(float64(n)))
 		if s.MultiInstance.Rows == 0 { s.MultiInstance.Rows = 1 }
-		s.MultiInstance.Cols = n / s.MultiInstance.Rows
+		s.MultiInstance.Cols =int(math.Ceil(float64(n) / float64(s.MultiInstance.Rows)))
 		s.Mu.Unlock()
 
 		log.Printf("[Server %d] peer %d removed. grid updated to %dx%d", 
 			s.ID, id, s.MultiInstance.Rows, s.MultiInstance.Cols)
+		logger.Emit(fmt.Sprintf("[NODE] Server %d LEFT or CRASHED. Grid updated.", id))
 	}
 }

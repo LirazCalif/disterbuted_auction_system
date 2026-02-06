@@ -1,26 +1,69 @@
-<h2>Auctions</h2>
+<div class="header-actions">
+  <h2>Live Auctions</h2>
+  
+  <input [(ngModel)]="searchNameStr" placeholder="By name">
+  <button (click)="searchByName()">Find Auction By Name</button>
 
-<div *ngIf="loading">Loading...</div>
+  <input [(ngModel)]="searchIdNum" type="number" placeholder="By ID">
+  <button (click)="searchById()">Find Auction By ID</button>
 
-<div *ngFor="let a of auctions" class="auction" style="border: 1px solid #ccc; margin: 10px; padding: 10px;">
-  <h3>{{ a.item_name }}</h3>
-  <p>Highest Bid: ${{ a.highest_bid }}</p>
-  <p>Status: {{ a.is_open ? 'Open' : 'Closed' }}</p>
+  <button (click)="checkUserHistory()" style="background-color: #34495e; color: white;">
+    My Activity Log
+  </button>
 
-  <div *ngIf="a.is_open">
-    <hr>
-    <div>
-      <label>User ID: </label>
-      <input #uid type="number" placeholder="ID">
-    </div>
-    <div>
-      <label>Bid Amount: </label>
-      <input #amt type="number" placeholder="Amount">
-    </div>
+  <button (click)="checkMyCreatorRevenue()" style="background-color: #27ae60;">
+    Verify My Revenue
+  </button>
+  
+  <button (click)="runStressTest()" style="background-color: #e67e22;">
+    Run 20 bid batch
+  </button>
 
-    <div style="margin-top: 10px;">
-      <button (click)="placeBid(a, +uid.value, +amt.value)">Place Bid</button>
-      <button (click)="closeAuction(a, +uid.value)" style="color: red;">Close Auction</button>
+  <button (click)="refreshList()">Refresh</button>
+</div>
+
+<div *ngIf="loading" class="sync-spinner"> syncing with paxos </div>
+
+<div *ngIf="auctions.length > 0">
+  <div *ngFor="let a of auctions" class="auction">
+    <div class="item-header">
+      <div>
+        <h3>{{ a.item_name }} (ID: {{ a.item_id }})</h3>
+        <div class="auction-actions">
+          <button (click)="closeAuction(a, userId() ?? 0)" 
+                  [disabled]="!a.is_open || !userId()" 
+                  class="close-btn">
+            Close
+          </button>
+
+          <button (click)="deleteAuction(a, userId() ?? 0)" 
+                  [disabled]="!userId()"
+                  class="delete-btn">
+            Delete
+          </button>
+        </div>
+        <p><strong>Highest Bid:</strong> ${{ a.highest_bid }}</p>
+        <p>
+          <strong>Status:</strong> {{ a.is_open ? 'Open' : 'Closed' }} | 
+          <strong>Creator:</strong> {{ a.creator_id }}
+        </p>
+      </div>
+      
+      <button (click)="verifyBidSync(a.item_id)" class="sync-badge-btn">
+        Updated Bid
+      </button>
     </div>
   </div>
+</div>
+
+
+<div *ngIf="userHistory.length > 0" class="history-section">
+  <h3>Your Paxos Activity Log</h3>
+  <div class="history-list">
+    <div *ngFor="let act of userHistory" class="history-item">
+      <strong>[{{ act.type }}]</strong> {{ act.message }} 
+      <small style="color: #888;">{{ act.timestamp }}</small>
+    </div>
+  </div>
+  <button (click)="userHistory = []">Clear View</button>
 </div>

@@ -9,14 +9,17 @@ import (
 	"strings"
 	"time"
 
-	"paxos/src/server/api"
-	"paxos/src/server/membership"
+	"paxos/api"
+	"paxos/membership"
+	"paxos/logger"
 )
 
 func main() {
-	// flags passed by Docker-Compose
+	// flags passed by docker compose
 	serverID := flag.Int("id", 0, "Server ID (0 to n-1)")
 	flag.Parse()
+
+	logger.InitLogFilter()
 
 	snapshotPath := "/app/data/snapshot.json"
 	if _, err := os.Stat(snapshotPath); err == nil {
@@ -53,7 +56,7 @@ func main() {
 		log.Fatalf("failed to initiate membership: %v", err)
 	}
 
-	// Register membership after the gRPC server is ready
+	// register membership when gRPC server is ready
 	go func() {
 		time.Sleep(1 * time.Second)
 		mngr.StartMembership(context.Background(), currAddr)

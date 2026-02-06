@@ -4,19 +4,20 @@ FROM golang:1.25-alpine AS builder
 WORKDIR /app
 
 # Copy the entire project from the context (the root folder)
-COPY go.mod go.sum ./
+COPY src/server/go.mod src/server/go.sum ./
 
 # Download dependencies
 RUN go mod download
 
-COPY . .
+COPY src/server/ .
 
 # Build the Paxos server binary
-RUN go build -o paxos_server src/server/main.go
-
+RUN go build -o paxos_server main.go
 
 #runtime
 FROM alpine:3.19
 WORKDIR /app
 COPY --from=builder /app/paxos_server .
+
+
 CMD ["./paxos_server"]

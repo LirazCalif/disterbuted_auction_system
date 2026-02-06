@@ -10,6 +10,7 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
+	"paxos/logger"
 )
 
 type ElectionManager struct {
@@ -20,9 +21,8 @@ type ElectionManager struct {
 	
 	mu          sync.RWMutex
 	isLeader    bool
-	leaderID    int32 // The id of the current leader 
+	leaderID    int32 
 
-	//for multipaxos improvement
 	stable         bool
 	termProposalID int64
 
@@ -57,10 +57,11 @@ func (elect_manager *ElectionManager) StartCampaign(ctx context.Context) {
 
 				log.Printf("[Election %d] Connecting to Etcd Session...", elect_manager.ServerID)
 
-				// Create a session - 5 seconds alive time wait
+				// create a session - 5 seconds TTL
 				session, err := concurrency.NewSession(elect_manager.EtcdClient, concurrency.WithTTL(5))
 				if err != nil {
 					log.Printf("[Election %d] failed to create a session: %v", elect_manager.ServerID, err)
+					logger.Emit(fmt.Sprintf("[NODE] Server %d failed etcd session: %v", elect_manager.ServerID, err))
 					time.Sleep(2 * time.Second)
 					continue
 				}
@@ -69,14 +70,14 @@ func (elect_manager *ElectionManager) StartCampaign(ctx context.Context) {
 
 				elect_manager.Election = concurrency.NewElection(session, "/paxos/leader")
 				
-				//Start a watcher for this specific session
+				//start a watcher for this specific session
 				ctxWatch, cancelWatch := context.WithCancel(ctx)
 				go elect_manager.watchLeadership(ctxWatch)
 
 
 				log.Printf("[Election %d] Campaigning", elect_manager.ServerID)
 				
-				// campaign - blocks until we become leader
+				// campaign - blocks until  become leader
 				err = elect_manager.Election.Campaign(ctx, fmt.Sprintf("%d", elect_manager.ServerID))
 				if err != nil {
 					//clean if fails
@@ -89,6 +90,10 @@ func (elect_manager *ElectionManager) StartCampaign(ctx context.Context) {
 
 				// set myself as the leader
 				elect_manager.setLeader(true, elect_manager.ServerID)
+
+				logger.EmitNodeStatus(int(elect_manager.ServerID), 0, true) 
+                logger.Emit(fmt.Sprintf("[LEADER] Server %d won election and is now the proposer", elect_manager.ServerID))
+
 				log.Printf("[Election %d] is the leader", elect_manager.ServerID)
 
 				//  hold leadership
@@ -101,6 +106,10 @@ func (elect_manager *ElectionManager) StartCampaign(ctx context.Context) {
 					elect_manager.setLeader(false, -1)
 					elect_manager.MarkStable(false)
 					log.Printf("[Election %d] Session expired, no longer leader", elect_manager.ServerID)
+					
+					logger.EmitNodeStatus(int(elect_manager.ServerID), 0, false)
+                    logger.Emit(fmt.Sprintf("[NODE] Server %d session expired, stepped down", elect_manager.ServerID))
+					
 					cancelWatch()
 				}
 			}
@@ -127,8 +136,8 @@ func (elect_manager *ElectionManager) watchLeadership(ctx context.Context) {
 				// update leader
 				elect_manager.setLeaderID(int32(leaderID))
 				
-                //  Logging
 				log.Printf("[Election %d] Observed new leader: %d", elect_manager.ServerID, leaderID)
+				logger.Emit(fmt.Sprintf("[QUORUM] Cluster reached consensus on Leader: %d", leaderID))
 			}
 		}
 	}
@@ -181,23 +190,23 @@ func (elect_manager *ElectionManager) Close() {
 	}
 }
 
-// improvement 2 - multipaxos
+//  multipaxos
 
-// Check if we are a "Stable" leader - can skip prepare
+// check ifthe leader is stable
 func (elect_manager *ElectionManager) IsStableLeader() bool {
 	elect_manager.mu.RLock()
 	defer elect_manager.mu.RUnlock()
 	return elect_manager.isLeader && elect_manager.stable
 }
 
-// Update stability status
+// update stability status
 func (elect_manager *ElectionManager) MarkStable(stable bool) {
 	elect_manager.mu.Lock()
 	defer elect_manager.mu.Unlock()
 	elect_manager.stable = stable
 }
 
-// Get the ProposalID associated with the current stable term
+// Get the ProposalID of the stable term
 func (elect_manager *ElectionManager) GetCurrentTermProposalID() int64 {
 	elect_manager.mu.RLock()
 	defer elect_manager.mu.RUnlock()

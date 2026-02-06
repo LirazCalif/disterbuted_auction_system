@@ -3,22 +3,25 @@
 
   <div class="form-group">
     <label>Item Name:</label>
-    <input [(ngModel)]="auction.title" placeholder="e.g. Vintage Camera" />
+    <input [(ngModel)]="auction.title" name="title" placeholder="e.g. Vintage Camera" required />
   </div>
 
   <div class="form-group">
-    <label>Creator ID:</label>
-    <input [(ngModel)]="auction.creatorID" type="number" placeholder="Enter your ID" />
+    <label>Your Paxos User ID:</label>
+    <input [(ngModel)]="auction.creatorID" name="creatorID" type="number" readonly />
+    <small class="helper-text">(ID is auto filled from registration)</small>
   </div>
 
   <div class="form-group">
-    <label>Starting Price:</label>
-    <input [(ngModel)]="auction.startingPrice" type="number" placeholder="0.00" />
+    <label>Starting Price ($):</label>
+    <input [(ngModel)]="auction.startingPrice" name="startingPrice" type="number" min="0" />
   </div>
 
-  <button (click)="submitForm()" [disabled]="!auction.title">
-    Create Auction
+  <button (click)="submitForm()" [disabled]="!auction.title || auction.creatorID <= 0 || auction.startingPrice < 0 || isSubmitting()">
+    {{ isSubmitting() ? 'reaching consensus' : 'propose auction to cluster' }}
   </button>
 
-  <p *ngIf="successMessage" class="success">{{ successMessage }}</p>
+  <div *ngIf="successMessage" class="success">
+    {{ successMessage }}
+  </div>
 </div>
