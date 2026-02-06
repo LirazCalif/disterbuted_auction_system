@@ -18,7 +18,7 @@ Start-Process powershell -ArgumentList "-NoExit", "-Command", "$LogCmd"
 
 #messege and wait
 Write-Host "Starting system, waiting" -ForegroundColor Cyan
-# Start-Sleep -Seconds 15
+Start-Sleep -Seconds 15
 
 #open the front
 $FrontendDir = "$RootDir\src\etc\frontend"
