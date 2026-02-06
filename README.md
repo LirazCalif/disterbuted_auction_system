@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/25139855/README.md)
 # Distributed Auction System with Multi Paxos
 
 A fault-tolerant, linearizable distributed auction system built with **Go**, **Angular**, and **Docker**.
